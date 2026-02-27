@@ -187,13 +187,21 @@ Updated: 2026-02-27
    - Supports optional flags: `--skip-check`, `--profile=/abs/path/profile.json`
    - Added verification test: `test-deploy-wrapper.js`
 
+26. **Dead-letter replay safety policy added (approval mode)**
+   - `POST /jobs/dead-letter/replay-bulk` now supports `preview` mode for safe dry-run
+   - Added safety policy gates: `maxLimit`, `approvalThreshold`, `requireApproval`, optional `approvalCode`
+   - Large/broad replay now returns `403 approval_required` unless approved
+   - Added blocked-action audit log (`scheduler-replay` / `dead_letter_replay_blocked`)
+   - `/health` now exposes dead-letter replay policy snapshot
+   - Added test: `test-dead-letter-safety-policy.js`
+
 ---
 
 ## In progress / next
 
-1. Add dead-letter replay safety policy (batch guardrails + approval mode for large replays)
-2. Add alert routing integration (pipe `delivery_alert_triggered` into cron-event/user notification flow)
-3. Add deployment docs hardening (rollback + smoke-check playbook)
+1. Add alert routing integration (pipe `delivery_alert_triggered` into cron-event/user notification flow)
+2. Add deployment docs hardening (rollback + smoke-check playbook)
+3. Add dead-letter replay policy ops controls (allowlist/role-based approval strategy)
 
 ---
 
@@ -224,6 +232,7 @@ npm run test:scheduler-delivery
 npm run test:retry
 npm run test:replay
 npm run test:replay-bulk
+npm run test:replay-safety
 npm run test:quality
 npm run test:alerts
 npm run test:inline-retry

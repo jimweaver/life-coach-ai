@@ -140,6 +140,12 @@ async function createServer() {
       rate_limit_backend: rateLimitBackend,
       rate_limit_policy: rateLimitPolicy,
       cron_delivery_mode: cronDeliveryMode,
+      dead_letter_replay_policy: {
+        max_limit: Number(process.env.DEADLETTER_REPLAY_MAX_LIMIT || 500),
+        approval_threshold: Number(process.env.DEADLETTER_REPLAY_APPROVAL_THRESHOLD || 50),
+        require_approval: String(process.env.DEADLETTER_REPLAY_REQUIRE_APPROVAL || 'true').toLowerCase() !== 'false',
+        approval_code_configured: !!process.env.DEADLETTER_REPLAY_APPROVAL_CODE
+      },
       time: new Date().toISOString()
     });
   });
@@ -471,6 +477,13 @@ async function createServer() {
     }
   });
 
+  const deadLetterReplayPolicy = {
+    maxLimit: Number(process.env.DEADLETTER_REPLAY_MAX_LIMIT || 500),
+    approvalThreshold: Number(process.env.DEADLETTER_REPLAY_APPROVAL_THRESHOLD || 50),
+    requireApproval: String(process.env.DEADLETTER_REPLAY_REQUIRE_APPROVAL || 'true').toLowerCase() !== 'false',
+    approvalCode: process.env.DEADLETTER_REPLAY_APPROVAL_CODE || null
+  };
+
   app.post('/jobs/dead-letter/replay-bulk', async (req, res) => {
     try {
       const limit = Number(req.body?.limit || 20);
@@ -478,6 +491,9 @@ async function createServer() {
       const userId = req.body?.userId ? String(req.body.userId).trim() : null;
       const olderThanMinutesRaw = req.body?.olderThanMinutes;
       const maxRetriesRaw = req.body?.maxRetries;
+      const preview = req.body?.preview === true;
+      const approve = req.body?.approve === true;
+      const approvalCode = req.body?.approvalCode ? String(req.body.approvalCode) : null;
 
       let olderThanMinutes;
       if (olderThanMinutesRaw !== undefined) {
@@ -495,12 +511,80 @@ async function createServer() {
         }
       }
 
-      if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
-        return badRequest(res, ['limit must be an integer between 1 and 500']);
+      if (!Number.isInteger(limit) || limit < 1 || limit > deadLetterReplayPolicy.maxLimit) {
+        return badRequest(res, [`limit must be an integer between 1 and ${deadLetterReplayPolicy.maxLimit}`]);
       }
 
       if (userId && !isUuid(userId)) {
         return badRequest(res, ['userId must be a valid UUID']);
+      }
+
+      const broadScope = !eventType && !userId && !Number.isInteger(olderThanMinutes);
+      const largeReplay = limit >= deadLetterReplayPolicy.approvalThreshold || broadScope;
+
+      if (preview) {
+        const events = await db.getDeadLetterEvents({
+          limit,
+          eventType,
+          userId,
+          olderThanMinutes
+        });
+
+        return res.json({
+          ok: true,
+          preview: true,
+          policy: {
+            ...deadLetterReplayPolicy,
+            approvalCode: deadLetterReplayPolicy.approvalCode ? '[configured]' : null
+          },
+          requires_approval: deadLetterReplayPolicy.requireApproval && largeReplay,
+          count: events.length,
+          sample: events.slice(0, 10)
+        });
+      }
+
+      if (deadLetterReplayPolicy.requireApproval && largeReplay) {
+        const codeOk = !deadLetterReplayPolicy.approvalCode || approvalCode === deadLetterReplayPolicy.approvalCode;
+        if (!approve || !codeOk) {
+          try {
+            await db.logAgentAction(
+              'scheduler-replay',
+              userId || null,
+              null,
+              'dead_letter_replay_blocked',
+              null,
+              'success',
+              null,
+              {
+                reason: 'approval_required',
+                limit,
+                eventType,
+                userId,
+                olderThanMinutes: Number.isInteger(olderThanMinutes) ? olderThanMinutes : null,
+                policy: {
+                  maxLimit: deadLetterReplayPolicy.maxLimit,
+                  approvalThreshold: deadLetterReplayPolicy.approvalThreshold,
+                  requireApproval: deadLetterReplayPolicy.requireApproval,
+                  approvalCodeConfigured: !!deadLetterReplayPolicy.approvalCode
+                }
+              }
+            );
+          } catch (_e) {
+            // best effort
+          }
+
+          return res.status(403).json({
+            ok: false,
+            reason: 'approval_required',
+            policy: {
+              maxLimit: deadLetterReplayPolicy.maxLimit,
+              approvalThreshold: deadLetterReplayPolicy.approvalThreshold,
+              requireApproval: deadLetterReplayPolicy.requireApproval,
+              approvalCodeRequired: !!deadLetterReplayPolicy.approvalCode
+            },
+            hint: 'Set approve=true and include approvalCode when configured.'
+          });
+        }
       }
 
       const result = await scheduler.replayDeadLetterBatch({
@@ -515,7 +599,14 @@ async function createServer() {
         return res.status(400).json(result);
       }
 
-      res.json({ ok: true, result });
+      res.json({
+        ok: true,
+        policy_applied: {
+          largeReplay,
+          approvalChecked: deadLetterReplayPolicy.requireApproval
+        },
+        result
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
