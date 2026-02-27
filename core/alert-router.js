@@ -5,6 +5,19 @@ class AlertRouter {
     this.enabled = options.enabled ?? String(process.env.ALERT_ROUTING_ENABLED || 'true').toLowerCase() !== 'false';
     this.severityMin = String(options.severityMin ?? process.env.ALERT_ROUTING_MIN_LEVEL ?? 'warn').toLowerCase();
     this.eventType = options.eventType || 'delivery_alert';
+
+    this.userId = options.userId ?? process.env.ALERT_ROUTING_USER_ID ?? null;
+    this.userIdWarn = options.userIdWarn ?? process.env.ALERT_ROUTING_USER_ID_WARN ?? null;
+    this.userIdCritical = options.userIdCritical ?? process.env.ALERT_ROUTING_USER_ID_CRITICAL ?? null;
+    this.channel = options.channel ?? process.env.ALERT_ROUTING_CHANNEL ?? 'cron-event';
+
+    const strategy = String(options.strategy ?? process.env.ALERT_ROUTING_STRATEGY ?? 'single').toLowerCase();
+    this.strategy = strategy === 'severity' ? 'severity' : 'single';
+
+    this.escalationEnabled = options.escalationEnabled ?? String(process.env.ALERT_ROUTING_ESCALATION_ENABLED || 'false').toLowerCase() !== 'false';
+    this.escalationMinLevel = String(options.escalationMinLevel ?? process.env.ALERT_ROUTING_ESCALATION_MIN_LEVEL ?? 'critical').toLowerCase();
+    this.escalationUserId = options.escalationUserId ?? process.env.ALERT_ROUTING_ESCALATION_USER_ID ?? null;
+    this.escalationChannel = options.escalationChannel ?? process.env.ALERT_ROUTING_ESCALATION_CHANNEL ?? this.channel;
   }
 
   levelRank(level) {
@@ -15,6 +28,37 @@ class AlertRouter {
   shouldRoute(level) {
     if (!this.enabled) return false;
     return this.levelRank(level) >= this.levelRank(this.severityMin);
+  }
+
+  resolveRouting(level) {
+    const normalized = String(level || 'info').toLowerCase();
+
+    let primaryUserId = this.userId || null;
+    if (this.strategy === 'severity') {
+      if (normalized === 'critical' && this.userIdCritical) {
+        primaryUserId = this.userIdCritical;
+      } else if ((normalized === 'warn' || normalized === 'warning') && this.userIdWarn) {
+        primaryUserId = this.userIdWarn;
+      }
+    }
+
+    const escalationTriggered = this.escalationEnabled
+      && !!this.escalationUserId
+      && this.levelRank(normalized) >= this.levelRank(this.escalationMinLevel)
+      && this.escalationUserId !== primaryUserId;
+
+    return {
+      strategy: this.strategy,
+      primaryUserId,
+      primaryChannel: this.channel,
+      escalation: {
+        enabled: this.escalationEnabled,
+        minLevel: this.escalationMinLevel,
+        userId: this.escalationUserId,
+        channel: this.escalationChannel,
+        triggered: escalationTriggered
+      }
+    };
   }
 
   buildMessage(alert) {
@@ -70,46 +114,84 @@ class AlertRouter {
 
     const message = this.buildMessage(alert);
     const metadata = this.buildMetadata(alert);
+    const routing = this.resolveRouting(level);
+    const maxRetries = Number(process.env.ALERT_ROUTING_RETRY_MAX || 1);
 
-    const envelope = this.delivery?.buildEnvelope
-      ? this.delivery.buildEnvelope({
-        userId: null,
-        cycle: 'delivery_alert',
-        message,
-        severity: level,
-        metadata: {
-          event_type: this.eventType,
-          ...metadata
+    const buildEnvelope = ({ eventType, userId, routeType, extra = {} }) => (
+      this.delivery?.buildEnvelope
+        ? this.delivery.buildEnvelope({
+          userId,
+          cycle: 'delivery_alert',
+          message,
+          severity: level,
+          metadata: {
+            event_type: eventType,
+            route_type: routeType,
+            route_strategy: routing.strategy,
+            route_channel: routeType === 'primary' ? routing.primaryChannel : routing.escalation.channel,
+            ...metadata,
+            ...extra
+          }
+        })
+        : {
+          kind: 'systemEvent',
+          text: message,
+          source: 'life-coach-alert-router',
+          event_type: eventType,
+          severity: level,
+          user_id: userId || null,
+          timestamp: new Date().toISOString(),
+          metadata: {
+            route_type: routeType,
+            route_strategy: routing.strategy,
+            route_channel: routeType === 'primary' ? routing.primaryChannel : routing.escalation.channel,
+            ...metadata,
+            ...extra
+          }
         }
-      })
-      : {
-        kind: 'systemEvent',
-        text: message,
-        source: 'life-coach-alert-router',
-        event_type: this.eventType,
-        severity: level,
-        timestamp: new Date().toISOString(),
-        metadata
-      };
+    );
 
-    let deliveryResult = {
-      delivered: false,
-      mode: this.delivery?.mode || 'none',
-      reason: 'delivery_unavailable'
+    const deliverEnvelope = async (envelope) => {
+      if (this.delivery && typeof this.delivery.deliverWithRetry === 'function') {
+        try {
+          return await this.delivery.deliverWithRetry(envelope, { maxRetries });
+        } catch (err) {
+          return {
+            delivered: false,
+            mode: this.delivery?.mode || 'unknown',
+            reason: err.message
+          };
+        }
+      }
+
+      return {
+        delivered: false,
+        mode: this.delivery?.mode || 'none',
+        reason: 'delivery_unavailable'
+      };
     };
 
-    if (this.delivery && typeof this.delivery.deliverWithRetry === 'function') {
-      try {
-        deliveryResult = await this.delivery.deliverWithRetry(envelope, {
-          maxRetries: Number(process.env.ALERT_ROUTING_RETRY_MAX || 1)
-        });
-      } catch (err) {
-        deliveryResult = {
-          delivered: false,
-          mode: this.delivery?.mode || 'unknown',
-          reason: err.message
-        };
-      }
+    const primaryEnvelope = buildEnvelope({
+      eventType: this.eventType,
+      userId: routing.primaryUserId || null,
+      routeType: 'primary'
+    });
+    const primaryDelivery = await deliverEnvelope(primaryEnvelope);
+
+    let escalationEnvelope = null;
+    let escalationDelivery = null;
+
+    if (routing.escalation.triggered) {
+      escalationEnvelope = buildEnvelope({
+        eventType: `${this.eventType}_escalation`,
+        userId: routing.escalation.userId,
+        routeType: 'escalation',
+        extra: {
+          escalation_min_level: routing.escalation.minLevel,
+          primary_user_id: routing.primaryUserId || null
+        }
+      });
+      escalationDelivery = await deliverEnvelope(escalationEnvelope);
     }
 
     if (this.db?.logAgentAction) {
@@ -124,8 +206,17 @@ class AlertRouter {
           null,
           {
             level,
-            envelope,
-            delivery: deliveryResult,
+            routing,
+            primary: {
+              envelope: primaryEnvelope,
+              delivery: primaryDelivery
+            },
+            escalation: routing.escalation.triggered
+              ? {
+                envelope: escalationEnvelope,
+                delivery: escalationDelivery
+              }
+              : null,
             metadata
           }
         );
@@ -135,10 +226,17 @@ class AlertRouter {
     }
 
     return {
-      routed: !!deliveryResult.delivered,
+      routed: !!primaryDelivery?.delivered || !!escalationDelivery?.delivered,
       level,
-      envelope,
-      delivery: deliveryResult
+      routing,
+      envelope: primaryEnvelope,
+      delivery: primaryDelivery,
+      escalation: routing.escalation.triggered
+        ? {
+          envelope: escalationEnvelope,
+          delivery: escalationDelivery
+        }
+        : null
     };
   }
 }

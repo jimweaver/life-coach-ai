@@ -16,6 +16,19 @@ class SchedulerRunner {
     this.deliverMorning = options.deliverMorning ?? String(process.env.SCHEDULER_DELIVER_MORNING || 'true').toLowerCase() !== 'false';
     this.inlineRetryMax = Number(options.inlineRetryMax ?? process.env.SCHEDULER_INLINE_RETRY_MAX ?? 1);
 
+    const normalizeRouteStrategy = (value) => {
+      const strategy = String(value || 'single').toLowerCase();
+      if (strategy === 'severity') return 'severity';
+      return 'single';
+    };
+
+    const normalizeLevel = (value, fallback = 'warn') => {
+      const lv = String(value || fallback).toLowerCase();
+      if (lv === 'warning') return 'warn';
+      if (['info', 'warn', 'critical'].includes(lv)) return lv;
+      return fallback;
+    };
+
     this.deliveryAlertConfig = {
       minAttempts: Number(options.alertMinAttempts ?? process.env.DELIVERY_ALERT_MIN_ATTEMPTS ?? 3),
       warnFailureRate: Number(options.warnFailureRate ?? process.env.DELIVERY_ALERT_WARN_FAILURE_RATE ?? 0.2),
@@ -29,7 +42,15 @@ class SchedulerRunner {
       stateTtlSec: Number(options.alertStateTtlSec ?? process.env.DELIVERY_ALERT_STATE_TTL_SEC ?? 604800),
       routeEnabled: options.alertRouteEnabled ?? String(process.env.DELIVERY_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
       routeRetryMax: Number(options.alertRouteRetryMax ?? process.env.DELIVERY_ALERT_ROUTE_RETRY_MAX ?? 1),
-      routeUserId: options.alertRouteUserId ?? process.env.DELIVERY_ALERT_ROUTE_USER_ID ?? null
+      routeUserId: options.alertRouteUserId ?? process.env.DELIVERY_ALERT_ROUTE_USER_ID ?? null,
+      routeUserIdWarn: options.alertRouteUserIdWarn ?? process.env.DELIVERY_ALERT_ROUTE_USER_ID_WARN ?? null,
+      routeUserIdCritical: options.alertRouteUserIdCritical ?? process.env.DELIVERY_ALERT_ROUTE_USER_ID_CRITICAL ?? null,
+      routeChannel: options.alertRouteChannel ?? process.env.DELIVERY_ALERT_ROUTE_CHANNEL ?? 'cron-event',
+      routeStrategy: normalizeRouteStrategy(options.alertRouteStrategy ?? process.env.DELIVERY_ALERT_ROUTE_STRATEGY ?? 'single'),
+      escalationEnabled: options.alertEscalationEnabled ?? String(process.env.DELIVERY_ALERT_ESCALATION_ENABLED || 'false').toLowerCase() !== 'false',
+      escalationMinLevel: normalizeLevel(options.alertEscalationMinLevel ?? process.env.DELIVERY_ALERT_ESCALATION_MIN_LEVEL ?? 'critical', 'critical'),
+      escalationUserId: options.alertEscalationUserId ?? process.env.DELIVERY_ALERT_ESCALATION_USER_ID ?? null,
+      escalationChannel: options.alertEscalationChannel ?? process.env.DELIVERY_ALERT_ESCALATION_CHANNEL ?? (process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event')
     };
   }
 
@@ -125,43 +146,58 @@ class SchedulerRunner {
     return `${headline}\nreasons: ${reasonText}\nmetrics: dead_letter=${dead}, growth=${growth}, failure_rate=${failureRate}`;
   }
 
-  async dispatchDeliveryAlert({
-    level,
-    reasons,
-    windowMinutes,
-    metrics,
-    trend,
-    config
-  }) {
-    const routeCfg = this.deliveryAlertConfig;
+  normalizeAlertLevel(level) {
+    const lv = String(level || 'info').toLowerCase();
+    if (lv === 'warning') return 'warn';
+    if (['info', 'warn', 'critical'].includes(lv)) return lv;
+    return 'info';
+  }
 
-    if (this.delivery?.mode === 'none') {
-      return {
-        dispatched: false,
-        skipped: true,
-        reason: 'delivery_mode_none'
-      };
+  resolveAlertRouting(level) {
+    const cfg = this.deliveryAlertConfig;
+    const normalizedLevel = this.normalizeAlertLevel(level);
+
+    let primaryUserId = cfg.routeUserId || null;
+    if (cfg.routeStrategy === 'severity') {
+      if (normalizedLevel === 'critical' && cfg.routeUserIdCritical) {
+        primaryUserId = cfg.routeUserIdCritical;
+      } else if (normalizedLevel === 'warn' && cfg.routeUserIdWarn) {
+        primaryUserId = cfg.routeUserIdWarn;
+      }
     }
 
-    const envelope = {
-      kind: 'systemEvent',
-      text: this.buildDeliveryAlertText({ level, reasons, trend, metrics }),
-      source: 'life-coach-alerting',
-      event_type: 'delivery_alert_triggered',
-      cycle: 'delivery-alert',
-      severity: level,
-      user_id: routeCfg.routeUserId || null,
-      timestamp: new Date().toISOString(),
-      metadata: {
-        level,
-        reasons,
-        window_minutes: windowMinutes,
-        metrics,
-        trend,
-        config
+    const primaryChannel = cfg.routeChannel || 'cron-event';
+
+    const escalationTriggered = cfg.escalationEnabled
+      && !!cfg.escalationUserId
+      && this.compareAlertLevel(normalizedLevel, cfg.escalationMinLevel || 'critical') >= 0
+      && cfg.escalationUserId !== primaryUserId;
+
+    return {
+      level: normalizedLevel,
+      strategy: cfg.routeStrategy || 'single',
+      primaryUserId,
+      primaryChannel,
+      escalation: {
+        enabled: !!cfg.escalationEnabled,
+        minLevel: cfg.escalationMinLevel || 'critical',
+        userId: cfg.escalationUserId || null,
+        channel: cfg.escalationChannel || 'cron-event',
+        triggered: escalationTriggered
       }
     };
+  }
 
+  async deliverAlertEnvelope({
+    envelope,
+    eventType,
+    userId,
+    channel,
+    level,
+    reasons,
+    routeType,
+    maxRetries
+  }) {
     const outbox = {
       queued: false,
       event_id: null,
@@ -172,9 +208,9 @@ class SchedulerRunner {
     if (this.hasOutboxSupport()) {
       try {
         outbox.event_id = await this.db.enqueueOutboundEvent({
-          eventType: 'delivery_alert.triggered',
-          userId: routeCfg.routeUserId || null,
-          channel: 'cron-event',
+          eventType,
+          userId,
+          channel,
           source: 'scheduler-alert',
           payload: envelope
         });
@@ -185,10 +221,6 @@ class SchedulerRunner {
         outbox.error = err.message;
       }
     }
-
-    const maxRetries = Number.isInteger(routeCfg.routeRetryMax)
-      ? Math.max(0, routeCfg.routeRetryMax)
-      : 1;
 
     let deliveryResult;
     try {
@@ -209,7 +241,7 @@ class SchedulerRunner {
         if (deliveryResult?.delivered) {
           await this.db.markOutboundEventDispatched(outbox.event_id, {
             delivery: deliveryResult,
-            alert: { level, reasons }
+            alert: { level, reasons, route_type: routeType }
           });
           outbox.status = 'dispatched';
         } else {
@@ -218,7 +250,7 @@ class SchedulerRunner {
             deliveryResult?.reason || 'delivery_alert_delivery_failed',
             {
               delivery: deliveryResult,
-              alert: { level, reasons }
+              alert: { level, reasons, route_type: routeType }
             }
           );
           outbox.status = 'failed';
@@ -234,6 +266,127 @@ class SchedulerRunner {
       envelope,
       delivery: deliveryResult,
       outbox
+    };
+  }
+
+  async dispatchDeliveryAlert({
+    level,
+    reasons,
+    windowMinutes,
+    metrics,
+    trend,
+    config
+  }) {
+    const routeCfg = this.deliveryAlertConfig;
+
+    if (this.delivery?.mode === 'none') {
+      return {
+        dispatched: false,
+        skipped: true,
+        reason: 'delivery_mode_none'
+      };
+    }
+
+    const routing = this.resolveAlertRouting(level);
+
+    const maxRetries = Number.isInteger(routeCfg.routeRetryMax)
+      ? Math.max(0, routeCfg.routeRetryMax)
+      : 1;
+
+    const primaryEnvelope = {
+      kind: 'systemEvent',
+      text: this.buildDeliveryAlertText({ level: routing.level, reasons, trend, metrics }),
+      source: 'life-coach-alerting',
+      event_type: 'delivery_alert_triggered',
+      cycle: 'delivery-alert',
+      severity: routing.level,
+      user_id: routing.primaryUserId || null,
+      timestamp: new Date().toISOString(),
+      metadata: {
+        level: routing.level,
+        reasons,
+        window_minutes: windowMinutes,
+        metrics,
+        trend,
+        config,
+        routing: {
+          strategy: routing.strategy,
+          route_type: 'primary',
+          channel: routing.primaryChannel,
+          user_id: routing.primaryUserId || null
+        }
+      }
+    };
+
+    const primary = await this.deliverAlertEnvelope({
+      envelope: primaryEnvelope,
+      eventType: 'delivery_alert.triggered',
+      userId: routing.primaryUserId || null,
+      channel: routing.primaryChannel,
+      level: routing.level,
+      reasons,
+      routeType: 'primary',
+      maxRetries
+    });
+
+    let escalation = null;
+    if (routing.escalation.triggered) {
+      const escalationEnvelope = {
+        kind: 'systemEvent',
+        text: this.buildDeliveryAlertText({ level: routing.level, reasons, trend, metrics }),
+        source: 'life-coach-alerting',
+        event_type: 'delivery_alert_escalation',
+        cycle: 'delivery-alert',
+        severity: routing.level,
+        user_id: routing.escalation.userId,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          level: routing.level,
+          reasons,
+          window_minutes: windowMinutes,
+          metrics,
+          trend,
+          config,
+          routing: {
+            strategy: routing.strategy,
+            route_type: 'escalation',
+            channel: routing.escalation.channel,
+            user_id: routing.escalation.userId,
+            primary_user_id: routing.primaryUserId || null,
+            escalation_min_level: routing.escalation.minLevel
+          }
+        }
+      };
+
+      escalation = await this.deliverAlertEnvelope({
+        envelope: escalationEnvelope,
+        eventType: 'delivery_alert.escalation',
+        userId: routing.escalation.userId,
+        channel: routing.escalation.channel,
+        level: routing.level,
+        reasons,
+        routeType: 'escalation',
+        maxRetries
+      });
+    }
+
+    return {
+      dispatched: !!primary.dispatched,
+      envelope: primary.envelope,
+      delivery: primary.delivery,
+      outbox: primary.outbox,
+      routing: {
+        strategy: routing.strategy,
+        primary_user_id: routing.primaryUserId || null,
+        primary_channel: routing.primaryChannel,
+        escalation_enabled: routing.escalation.enabled,
+        escalation_min_level: routing.escalation.minLevel,
+        escalation_triggered: routing.escalation.triggered,
+        escalation_user_id: routing.escalation.userId,
+        escalation_channel: routing.escalation.channel
+      },
+      primary,
+      escalation
     };
   }
 
@@ -388,7 +541,15 @@ class SchedulerRunner {
         cooldown_minutes: cfg.cooldownMinutes,
         route_enabled: cfg.routeEnabled,
         route_retry_max: cfg.routeRetryMax,
-        route_user_id: cfg.routeUserId || null
+        route_strategy: cfg.routeStrategy,
+        route_channel: cfg.routeChannel,
+        route_user_id: cfg.routeUserId || null,
+        route_user_id_warn: cfg.routeUserIdWarn || null,
+        route_user_id_critical: cfg.routeUserIdCritical || null,
+        escalation_enabled: cfg.escalationEnabled,
+        escalation_min_level: cfg.escalationMinLevel,
+        escalation_user_id: cfg.escalationUserId || null,
+        escalation_channel: cfg.escalationChannel || null
       }
     };
   }

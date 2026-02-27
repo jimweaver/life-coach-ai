@@ -29,6 +29,7 @@
     "test:quality": "node test-data-quality-api.js",
     "test:alerts": "node test-delivery-alerts.js",
     "test:alert-routing": "node test-alert-routing.js",
+    "test:alert-policy": "node test-alert-routing-policy.js",
     "test:inline-retry": "node test-inline-dispatch-retry.js",
     "test:deploy": "node test-deploy-wrapper.js",
     "deploy:check": "node scripts/deployment-check.js",

@@ -237,7 +237,15 @@ async function createServer() {
       delivery_alert_policy: {
         route_enabled: String(process.env.DELIVERY_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
         route_retry_max: Number(process.env.DELIVERY_ALERT_ROUTE_RETRY_MAX || 1),
-        route_user_id_configured: !!process.env.DELIVERY_ALERT_ROUTE_USER_ID
+        route_strategy: String(process.env.DELIVERY_ALERT_ROUTE_STRATEGY || 'single').toLowerCase(),
+        route_channel: process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event',
+        route_user_id_configured: !!process.env.DELIVERY_ALERT_ROUTE_USER_ID,
+        route_user_warn_configured: !!process.env.DELIVERY_ALERT_ROUTE_USER_ID_WARN,
+        route_user_critical_configured: !!process.env.DELIVERY_ALERT_ROUTE_USER_ID_CRITICAL,
+        escalation_enabled: String(process.env.DELIVERY_ALERT_ESCALATION_ENABLED || 'false').toLowerCase() !== 'false',
+        escalation_min_level: String(process.env.DELIVERY_ALERT_ESCALATION_MIN_LEVEL || 'critical').toLowerCase(),
+        escalation_user_id_configured: !!process.env.DELIVERY_ALERT_ESCALATION_USER_ID,
+        escalation_channel: process.env.DELIVERY_ALERT_ESCALATION_CHANNEL || (process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event')
       },
       time: new Date().toISOString()
     });
@@ -460,6 +468,30 @@ async function createServer() {
         },
         log_metrics: logMetrics,
         outbox: outboxStats
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/delivery/route-policy', async (_req, res) => {
+    try {
+      const cfg = scheduler?.deliveryAlertConfig || {};
+      res.json({
+        ok: true,
+        policy: {
+          route_enabled: !!cfg.routeEnabled,
+          route_strategy: cfg.routeStrategy || 'single',
+          route_retry_max: Number(cfg.routeRetryMax || 0),
+          route_channel: cfg.routeChannel || 'cron-event',
+          route_user_id: cfg.routeUserId || null,
+          route_user_id_warn: cfg.routeUserIdWarn || null,
+          route_user_id_critical: cfg.routeUserIdCritical || null,
+          escalation_enabled: !!cfg.escalationEnabled,
+          escalation_min_level: cfg.escalationMinLevel || 'critical',
+          escalation_user_id: cfg.escalationUserId || null,
+          escalation_channel: cfg.escalationChannel || null
+        }
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

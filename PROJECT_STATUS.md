@@ -223,13 +223,28 @@ Updated: 2026-02-27
    - Preview and response payloads now include operator authorization context
    - Added coverage: `test-dead-letter-ops-policy.js`
 
+30. **Alert routing policy controls added (destination strategy + escalation channels)**
+   - Scheduler route policy now supports:
+     - `DELIVERY_ALERT_ROUTE_STRATEGY` (`single|severity`)
+     - `DELIVERY_ALERT_ROUTE_USER_ID_WARN` / `DELIVERY_ALERT_ROUTE_USER_ID_CRITICAL`
+     - `DELIVERY_ALERT_ROUTE_CHANNEL`
+   - Added escalation controls:
+     - `DELIVERY_ALERT_ESCALATION_ENABLED`
+     - `DELIVERY_ALERT_ESCALATION_MIN_LEVEL`
+     - `DELIVERY_ALERT_ESCALATION_USER_ID`
+     - `DELIVERY_ALERT_ESCALATION_CHANNEL`
+   - Added policy endpoint: `GET /jobs/delivery/route-policy`
+   - Alert delivery result now includes routing metadata + optional escalation dispatch result
+   - `/health` now exposes expanded `delivery_alert_policy` snapshot
+   - Added coverage: `test-alert-routing-policy.js`
+
 ---
 
 ## In progress / next
 
-1. Add alert routing policy controls (destination strategy + escalation channels)
-2. Add production readiness checklist (observability + graceful shutdown hardening)
-3. Add deployment smoke orchestration mode (run checks against managed process lifecycle)
+1. Add production readiness checklist (observability + graceful shutdown hardening)
+2. Add deployment smoke orchestration mode (run checks against managed process lifecycle)
+3. Add alert destination governance docs (operator ownership + escalation runbook)
 
 ---
 
@@ -269,6 +284,7 @@ npm run test:ops-policy
 npm run test:quality
 npm run test:alerts
 npm run test:alert-routing
+npm run test:alert-policy
 npm run test:inline-retry
 npm run test:deploy
 npm run test:e2e
