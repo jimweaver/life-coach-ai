@@ -24,6 +24,7 @@ const {
 } = require('../scripts/canary-drift-trend');
 const DeployTrendAnomalyDetector = require('./deploy-trend-anomaly');
 const DeployTrendTelemetryAlertDetector = require('./deploy-trend-telemetry-alert');
+const DeployTrendTelemetrySuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert');
 const {
   isUuid,
   createRateLimiter,
@@ -54,6 +55,7 @@ async function createServer() {
   const canaryDriftDetector = new CanaryDriftDetector();
   const deployTrendAnomalyDetector = new DeployTrendAnomalyDetector();
   const deployTrendTelemetryAlertDetector = new DeployTrendTelemetryAlertDetector();
+  const deployTrendTelemetrySuppressionAlertDetector = new DeployTrendTelemetrySuppressionAlertDetector();
 
   const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
   const canaryDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
@@ -83,6 +85,14 @@ async function createServer() {
     suppressionDuplicateWindowMinutes: Number(process.env.DEPLOY_TREND_TELEMETRY_ALERT_DUPLICATE_WINDOW_MINUTES || 120),
     suppressionStateKey: process.env.DEPLOY_TREND_TELEMETRY_ALERT_STATE_KEY || 'lifecoach:deploy-trend-telemetry-alert:suppression',
     suppressionStateTtlSec: Number(process.env.DEPLOY_TREND_TELEMETRY_ALERT_STATE_TTL_SEC || 604800)
+  };
+
+  const deployTrendTelemetrySuppressionAlertRoutingPolicy = {
+    routeEnabled: String(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+    routeMinLevel: String(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
+    routeUserId: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_USER_ID || deployTrendTelemetryAlertRoutingPolicy.routeUserId || null,
+    routeChannel: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_CHANNEL || deployTrendTelemetryAlertRoutingPolicy.routeChannel || 'cron-event',
+    routeRetryMax: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_RETRY_MAX || deployTrendTelemetryAlertRoutingPolicy.routeRetryMax || 1)
   };
 
   const ownershipDriftRoutingPolicy = {
@@ -926,6 +936,24 @@ async function createServer() {
         min_route_attempts: deployTrendTelemetryAlertDetector.minRouteAttempts,
         min_buckets: deployTrendTelemetryAlertDetector.minBuckets,
         baseline_buckets: deployTrendTelemetryAlertDetector.baselineBuckets
+      },
+      deploy_trend_telemetry_suppression_alert_policy: {
+        route_enabled: deployTrendTelemetrySuppressionAlertRoutingPolicy.routeEnabled,
+        route_min_level: deployTrendTelemetrySuppressionAlertRoutingPolicy.routeMinLevel,
+        route_user_id_configured: !!deployTrendTelemetrySuppressionAlertRoutingPolicy.routeUserId,
+        route_channel: deployTrendTelemetrySuppressionAlertRoutingPolicy.routeChannel,
+        route_retry_max: deployTrendTelemetrySuppressionAlertRoutingPolicy.routeRetryMax,
+        warn_cooldown_share: deployTrendTelemetrySuppressionAlertDetector.warnCooldownShare,
+        critical_cooldown_share: deployTrendTelemetrySuppressionAlertDetector.criticalCooldownShare,
+        warn_duplicate_window_share: deployTrendTelemetrySuppressionAlertDetector.warnDuplicateWindowShare,
+        critical_duplicate_window_share: deployTrendTelemetrySuppressionAlertDetector.criticalDuplicateWindowShare,
+        warn_cooldown_spike: deployTrendTelemetrySuppressionAlertDetector.warnCooldownSpike,
+        critical_cooldown_spike: deployTrendTelemetrySuppressionAlertDetector.criticalCooldownSpike,
+        warn_duplicate_window_spike: deployTrendTelemetrySuppressionAlertDetector.warnDuplicateWindowSpike,
+        critical_duplicate_window_spike: deployTrendTelemetrySuppressionAlertDetector.criticalDuplicateWindowSpike,
+        min_suppressed: deployTrendTelemetrySuppressionAlertDetector.minSuppressed,
+        min_buckets: deployTrendTelemetrySuppressionAlertDetector.minBuckets,
+        baseline_buckets: deployTrendTelemetrySuppressionAlertDetector.baselineBuckets
       },
       time: new Date().toISOString()
     });
@@ -2176,6 +2204,198 @@ async function createServer() {
           suppression_state_key_configured: !!deployTrendTelemetryAlertRoutingPolicy.suppressionStateKey
         },
         trend
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/deploy-events/anomalies/telemetry/alerts/suppression/anomalies', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 60);
+      const limit = Number(req.query.limit || 5000);
+      const bucketLimit = Number(req.query.bucketLimit || 500);
+
+      const emitAudit = req.query.emitAudit === undefined
+        ? true
+        : String(req.query.emitAudit).toLowerCase() !== 'false';
+
+      const routeEnabled = req.query.route === undefined
+        ? deployTrendTelemetrySuppressionAlertRoutingPolicy.routeEnabled
+        : String(req.query.route).toLowerCase() !== 'false';
+
+      const routeMinLevel = String(req.query.routeMinLevel || deployTrendTelemetrySuppressionAlertRoutingPolicy.routeMinLevel).toLowerCase();
+      if (!['info', 'warn', 'warning', 'critical'].includes(routeMinLevel)) {
+        return badRequest(res, ['routeMinLevel must be one of info|warn|warning|critical']);
+      }
+
+      const routeUserId = req.query.routeUserId
+        ? String(req.query.routeUserId).trim()
+        : deployTrendTelemetrySuppressionAlertRoutingPolicy.routeUserId;
+
+      const routeChannel = req.query.routeChannel
+        ? String(req.query.routeChannel).trim()
+        : deployTrendTelemetrySuppressionAlertRoutingPolicy.routeChannel;
+
+      if (routeUserId && !isUuid(routeUserId)) {
+        return badRequest(res, ['routeUserId must be a valid UUID']);
+      }
+
+      const routeRetryMax = req.query.routeRetryMax === undefined
+        ? deployTrendTelemetrySuppressionAlertRoutingPolicy.routeRetryMax
+        : Number(req.query.routeRetryMax);
+
+      if (!Number.isInteger(routeRetryMax) || routeRetryMax < 0 || routeRetryMax > 10) {
+        return badRequest(res, ['routeRetryMax must be an integer between 0 and 10']);
+      }
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20000) {
+        return badRequest(res, ['limit must be an integer between 1 and 20000']);
+      }
+
+      if (!Number.isInteger(bucketLimit) || bucketLimit < 1 || bucketLimit > 5000) {
+        return badRequest(res, ['bucketLimit must be an integer between 1 and 5000']);
+      }
+
+      const trend = await db.getDeployTrendTelemetryAlertSuppressionTrend({
+        sinceMinutes,
+        bucketMinutes,
+        runId,
+        source,
+        limit,
+        bucketLimit
+      });
+
+      const alert = deployTrendTelemetrySuppressionAlertDetector.evaluate({ trend });
+
+      const routeCandidate = routeEnabled
+        && alert.should_notify
+        && (deployTrendLevelRank[alert.level] || 1) >= (deployTrendLevelRank[routeMinLevel] || 2);
+
+      let routed = null;
+      if (routeCandidate) {
+        const reasonsText = Array.isArray(alert.reasons) && alert.reasons.length
+          ? alert.reasons.join(', ')
+          : 'n/a';
+
+        const messageText = [
+          `[Deploy Trend Telemetry Suppression Alert][${alert.level}]`,
+          `reasons=${reasonsText}`,
+          `runId=${runId || 'all'}`,
+          `source=${source || 'all'}`,
+          `window=${sinceMinutes}m`,
+          `bucket=${bucketMinutes}m`
+        ].join(' ');
+
+        routed = await alertRouter.route({
+          kind: 'deploy_trend_telemetry_suppression_alert',
+          level: alert.level,
+          text: messageText,
+          metadata: {
+            filters: {
+              runId,
+              source,
+              sinceMinutes,
+              bucketMinutes,
+              limit,
+              bucketLimit
+            },
+            trend_summary: {
+              sample_size: trend.sample_size,
+              bucket_count: trend.bucket_count,
+              totals: trend.totals
+            },
+            alert
+          },
+          options: {
+            toUserId: routeUserId,
+            channel: routeChannel,
+            retryMax: routeRetryMax
+          }
+        });
+      }
+
+      if (emitAudit && alert.alert_detected) {
+        try {
+          await db.logAgentAction(
+            'deploy-trend',
+            null,
+            null,
+            'deploy_trend_telemetry_suppression_alert_detected',
+            null,
+            'success',
+            null,
+            {
+              filters: {
+                runId,
+                source,
+                sinceMinutes,
+                bucketMinutes,
+                limit,
+                bucketLimit
+              },
+              trend_summary: {
+                sample_size: trend.sample_size,
+                bucket_count: trend.bucket_count,
+                totals: trend.totals
+              },
+              alert,
+              route: {
+                enabled: routeEnabled,
+                min_level: routeMinLevel,
+                candidate: !!routeCandidate,
+                routed,
+                target_user_id: routeUserId || null,
+                target_channel: routeChannel,
+                route_retry_max: routeRetryMax
+              }
+            }
+          );
+        } catch (_e) {
+          // best effort only
+        }
+      }
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          limit,
+          bucketLimit
+        },
+        trend,
+        alert,
+        route: {
+          enabled: routeEnabled,
+          min_level: routeMinLevel,
+          candidate: !!routeCandidate,
+          target_user_id: routeUserId || null,
+          target_channel: routeChannel,
+          retry_max: routeRetryMax
+        },
+        routed
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

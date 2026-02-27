@@ -523,12 +523,26 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-telemetry-alert-suppression-trend`
    - Deployment ops + readiness docs updated with suppression trend observability gate
 
+59. **Deploy telemetry suppression threshold alerts added (cooldown/duplicate saturation + spikes)**
+   - Added detector module: `core/deploy-trend-telemetry-suppression-alert.js`
+   - Added endpoint: `GET /jobs/deploy-events/anomalies/telemetry/alerts/suppression/anomalies`
+   - Supports filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+   - Supports optional controls: `emitAudit`, `route`, `routeMinLevel`, `routeUserId`, `routeChannel`, `routeRetryMax`
+   - Detects suppression trend threshold breaches:
+     - `cooldown_saturation` / `cooldown_spike`
+     - `duplicate_window_saturation` / `duplicate_window_spike`
+   - Emits audit signal: `deploy_trend_telemetry_suppression_alert_detected`
+   - `/health` now exposes `deploy_trend_telemetry_suppression_alert_policy`
+   - Added coverage: `test-deploy-trend-telemetry-suppression-alert.js`
+   - Added npm script: `test:deploy-telemetry-suppression-alert`
+   - Deployment ops + readiness docs updated with suppression threshold alert endpoint/test gates
+
 ---
 
 ## In progress / next
 
 1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Add threshold alerts on suppression trend rollups (cooldown/duplicate saturation over time)
+2. Add suppression/cooldown controls for telemetry suppression-alert routing (duplicate paging guard)
 3. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
@@ -595,6 +609,7 @@ npm run test:deploy-telemetry-alert
 npm run test:deploy-telemetry-alert-suppression
 npm run test:deploy-telemetry-alert-suppression-observability
 npm run test:deploy-telemetry-alert-suppression-trend
+npm run test:deploy-telemetry-suppression-alert
 npm run test:deploy-suppression
 npm run test:deploy-dashboard
 npm run test:deploy-smoke
