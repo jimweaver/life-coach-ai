@@ -501,12 +501,21 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-telemetry-alert-suppression`
    - Deployment ops + readiness docs updated with suppression guard validation
 
+57. **Deploy telemetry-alert suppression observability endpoint added**
+   - Added endpoint: `GET /jobs/deploy-events/anomalies/telemetry/alerts/suppression`
+   - Returns route candidacy + suppression snapshot (`remaining_ms`, duplicate/cooldown reason, state source)
+   - Supports filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+   - Supports route simulation controls: `route`, `routeMinLevel`
+   - Added coverage: `test-deploy-trend-telemetry-alert-suppression-observability.js`
+   - Added npm script: `test:deploy-telemetry-alert-suppression-observability`
+   - Deployment ops + readiness docs updated with suppression observability gate
+
 ---
 
 ## In progress / next
 
 1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Add telemetry-alert suppression observability endpoint (state + cooldown remaining) for deploy trend alerts
+2. Extend telemetry-alert observability with suppression trend rollups (cooldown vs duplicate breakdown)
 3. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
@@ -571,6 +580,7 @@ npm run test:deploy-telemetry
 npm run test:deploy-telemetry-trend
 npm run test:deploy-telemetry-alert
 npm run test:deploy-telemetry-alert-suppression
+npm run test:deploy-telemetry-alert-suppression-observability
 npm run test:deploy-suppression
 npm run test:deploy-dashboard
 npm run test:deploy-smoke

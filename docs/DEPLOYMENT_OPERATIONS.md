@@ -208,6 +208,10 @@ Deploy event analytics APIs:
     - `DEPLOY_TREND_TELEMETRY_ALERT_STATE_KEY`
     - `DEPLOY_TREND_TELEMETRY_ALERT_STATE_TTL_SEC`
   - emits suppression audit action: `deploy_trend_telemetry_alert_route_suppressed`
+- `GET /jobs/deploy-events/anomalies/telemetry/alerts/suppression`
+  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+  - optional controls: `route`, `routeMinLevel`
+  - returns telemetry-alert route candidacy + suppression state snapshot (including remaining cooldown / duplicate window)
 
 Validation:
 
@@ -220,6 +224,7 @@ npm run test:deploy-telemetry
 npm run test:deploy-telemetry-trend
 npm run test:deploy-telemetry-alert
 npm run test:deploy-telemetry-alert-suppression
+npm run test:deploy-telemetry-alert-suppression-observability
 ```
 
 ---

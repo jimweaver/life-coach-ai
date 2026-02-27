@@ -40,6 +40,7 @@ npm run test:e2e
 - [ ] Deploy anomaly telemetry trend: `GET /jobs/deploy-events/anomalies/telemetry/trend`
 - [ ] Deploy anomaly telemetry threshold alerts: `GET /jobs/deploy-events/anomalies/telemetry/alerts`
 - [ ] Deploy anomaly telemetry alert suppression guard (cooldown + duplicate window)
+- [ ] Deploy anomaly telemetry alert suppression observability: `GET /jobs/deploy-events/anomalies/telemetry/alerts/suppression`
 - [ ] Canary drift check: `GET /jobs/canary/drift`
 - [ ] Canary drift trend check: `GET /jobs/canary/drift-trend`
 - [ ] Canary drift suppression observability: `GET /jobs/delivery/canary-drift/suppression`
@@ -96,6 +97,7 @@ npm run test:deploy-telemetry
 npm run test:deploy-telemetry-trend
 npm run test:deploy-telemetry-alert
 npm run test:deploy-telemetry-alert-suppression
+npm run test:deploy-telemetry-alert-suppression-observability
 npm run test:deploy-dashboard
 npm run test:graceful
 npm run test:e2e
