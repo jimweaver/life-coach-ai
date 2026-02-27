@@ -398,13 +398,27 @@ Updated: 2026-02-27
    - Added coverage: `test-canary-drift-suppression.js`
    - Deployment ops docs updated with canary suppression policy controls
 
+47. **Deploy trend anomaly detector added (spike + failure regression alerts)**
+   - Added detector module: `core/deploy-trend-anomaly.js`
+   - New API endpoint: `GET /jobs/deploy-events/anomalies`
+   - Detects anomalies across:
+     - run error-rate regression
+     - abort ratio spikes (`wrapper.abort` vs `wrapper.complete`)
+     - run duration regression
+     - bucketed event volume spike
+   - Supports optional routing via `AlertRouter` (`route`, `routeMinLevel`, `routeUserId`, `routeChannel`)
+   - Emits audit signal: `deploy_trend_anomaly_detected`
+   - `/health` now exposes `deploy_trend_anomaly_policy` snapshot
+   - Added coverage: `test-deploy-trend-anomaly.js`
+   - Deployment ops docs updated with anomaly API + env controls
+
 ---
 
 ## In progress / next
 
-1. Add deploy trend anomaly detector (spike/latency failure regression alerts)
-2. Add ownership drift suppression observability endpoint (state + cooldown remaining)
-3. Add canary drift suppression observability endpoint (state + cooldown remaining)
+1. Add ownership drift suppression observability endpoint (state + cooldown remaining)
+2. Add canary drift suppression observability endpoint (state + cooldown remaining)
+3. Add deploy trend suppression controls (cooldown + duplicate anomaly paging guard)
 
 ---
 
@@ -463,6 +477,7 @@ npm run test:deploy-observability
 npm run test:deploy-sink
 npm run test:deploy-analytics
 npm run test:deploy-trend
+npm run test:deploy-anomaly
 npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary

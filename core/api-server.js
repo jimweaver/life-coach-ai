@@ -22,6 +22,7 @@ const {
 const {
   computeCanaryDriftTrend
 } = require('../scripts/canary-drift-trend');
+const DeployTrendAnomalyDetector = require('./deploy-trend-anomaly');
 const {
   isUuid,
   createRateLimiter,
@@ -50,9 +51,19 @@ async function createServer() {
   });
   const ownershipDriftDetector = new AlertOwnershipDriftDetector();
   const canaryDriftDetector = new CanaryDriftDetector();
+  const deployTrendAnomalyDetector = new DeployTrendAnomalyDetector();
 
   const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
   const canaryDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+  const deployTrendLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+
+  const deployTrendRoutingPolicy = {
+    routeEnabled: String(process.env.DEPLOY_TREND_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+    routeMinLevel: String(process.env.DEPLOY_TREND_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
+    routeUserId: process.env.DEPLOY_TREND_ROUTE_USER_ID || null,
+    routeChannel: process.env.DEPLOY_TREND_ROUTE_CHANNEL || 'cron-event',
+    routeRetryMax: Number(process.env.DEPLOY_TREND_ROUTE_RETRY_MAX || 1)
+  };
 
   const ownershipDriftRoutingPolicy = {
     routeEnabled: String(process.env.ALERT_OWNER_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
@@ -603,6 +614,21 @@ async function createServer() {
         trend_default_since_minutes: Number(process.env.CANARY_DRIFT_TREND_DEFAULT_SINCE_MINUTES || 1440),
         trend_default_bucket_minutes: Number(process.env.CANARY_DRIFT_TREND_DEFAULT_BUCKET_MINUTES || 60),
         history_file: resolveHistoryFile()
+      },
+      deploy_trend_anomaly_policy: {
+        route_enabled: deployTrendRoutingPolicy.routeEnabled,
+        route_min_level: deployTrendRoutingPolicy.routeMinLevel,
+        route_user_id_configured: !!deployTrendRoutingPolicy.routeUserId,
+        route_channel: deployTrendRoutingPolicy.routeChannel,
+        route_retry_max: deployTrendRoutingPolicy.routeRetryMax,
+        warn_error_rate: deployTrendAnomalyDetector.warnErrorRate,
+        critical_error_rate: deployTrendAnomalyDetector.criticalErrorRate,
+        warn_abort_ratio: deployTrendAnomalyDetector.warnAbortRatio,
+        critical_abort_ratio: deployTrendAnomalyDetector.criticalAbortRatio,
+        warn_volume_spike: deployTrendAnomalyDetector.warnVolumeSpikeMultiplier,
+        critical_volume_spike: deployTrendAnomalyDetector.criticalVolumeSpikeMultiplier,
+        warn_duration_spike: deployTrendAnomalyDetector.warnDurationMultiplier,
+        critical_duration_spike: deployTrendAnomalyDetector.criticalDurationMultiplier
       },
       time: new Date().toISOString()
     });
@@ -1213,6 +1239,193 @@ async function createServer() {
           totals: heatmapTotals,
           peak_event: heatmapRows[0]?.event || null
         }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/deploy-events/anomalies', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 15);
+      const runLimit = Number(req.query.runLimit || 100);
+      const timelineLimit = Number(req.query.timelineLimit || 2000);
+      const heatmapLimit = Number(req.query.heatmapLimit || 500);
+      const emitAudit = req.query.emitAudit === undefined
+        ? true
+        : String(req.query.emitAudit).toLowerCase() !== 'false';
+      const route = req.query.route === undefined
+        ? deployTrendRoutingPolicy.routeEnabled
+        : String(req.query.route).toLowerCase() !== 'false';
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 500) {
+        return badRequest(res, ['runLimit must be an integer between 1 and 500']);
+      }
+
+      if (!Number.isInteger(timelineLimit) || timelineLimit < 1 || timelineLimit > 10000) {
+        return badRequest(res, ['timelineLimit must be an integer between 1 and 10000']);
+      }
+
+      if (!Number.isInteger(heatmapLimit) || heatmapLimit < 1 || heatmapLimit > 2000) {
+        return badRequest(res, ['heatmapLimit must be an integer between 1 and 2000']);
+      }
+
+      const [runs, timeline, heatmapRows] = await Promise.all([
+        db.summarizeDeployRuns({
+          sinceMinutes,
+          runId,
+          source,
+          limit: runLimit
+        }),
+        db.getDeployEventTimeline({
+          sinceMinutes,
+          bucketMinutes,
+          runId,
+          source,
+          limit: timelineLimit
+        }),
+        db.getDeployEventHeatmap({
+          sinceMinutes,
+          runId,
+          source,
+          limit: heatmapLimit
+        })
+      ]);
+
+      const anomaly = deployTrendAnomalyDetector.evaluate({
+        runs,
+        timeline,
+        heatmapRows
+      });
+
+      if (emitAudit && anomaly.anomaly_detected) {
+        try {
+          await db.logAgentAction(
+            'deploy-trend',
+            null,
+            null,
+            'deploy_trend_anomaly_detected',
+            null,
+            'success',
+            null,
+            {
+              level: anomaly.level,
+              reasons: anomaly.reasons,
+              anomaly_count: anomaly.anomaly_count,
+              filters: {
+                runId,
+                source,
+                sinceMinutes,
+                bucketMinutes
+              },
+              metrics: anomaly.metrics,
+              anomalies: anomaly.anomalies.slice(0, 10)
+            }
+          );
+        } catch (_e) {
+          // best effort only
+        }
+      }
+
+      let routed = null;
+      const routeMinLevel = String(req.query.routeMinLevel || deployTrendRoutingPolicy.routeMinLevel).toLowerCase();
+      const routeRank = deployTrendLevelRank[routeMinLevel] || deployTrendLevelRank.warn;
+      const shouldRoute = route && anomaly.anomaly_detected && (deployTrendLevelRank[anomaly.level] || 0) >= routeRank;
+
+      if (shouldRoute) {
+        const targetUserId = req.query.routeUserId
+          ? String(req.query.routeUserId)
+          : deployTrendRoutingPolicy.routeUserId;
+        const targetChannel = req.query.routeChannel
+          ? String(req.query.routeChannel)
+          : deployTrendRoutingPolicy.routeChannel;
+
+        if (!targetUserId) {
+          routed = {
+            attempted: false,
+            routed: false,
+            reason: 'route_target_not_configured',
+            policy: {
+              route_enabled: route,
+              route_min_level: routeMinLevel,
+              route_user_id_configured: !!deployTrendRoutingPolicy.routeUserId,
+              route_channel: targetChannel,
+              route_retry_max: deployTrendRoutingPolicy.routeRetryMax
+            }
+          };
+        } else {
+          const reasonsText = anomaly.reasons.slice(0, 3).join(', ');
+          const alertText = [
+            '🚨 Deploy Trend Anomaly',
+            `Level: ${String(anomaly.level).toUpperCase()}`,
+            `Reasons: ${reasonsText || 'n/a'}`,
+            `Window: ${sinceMinutes}m`,
+            `Anomalies: ${anomaly.anomaly_count}`
+          ].join('\n');
+
+          routed = await alertRouter.route({
+            kind: 'deploy_trend_anomaly',
+            level: anomaly.level,
+            text: alertText,
+            metadata: {
+              filters: {
+                runId,
+                source,
+                sinceMinutes,
+                bucketMinutes
+              },
+              anomaly,
+              policy: {
+                route_min_level: routeMinLevel,
+                route_retry_max: deployTrendRoutingPolicy.routeRetryMax
+              }
+            },
+            options: {
+              toUserId: targetUserId,
+              channel: targetChannel,
+              retryMax: deployTrendRoutingPolicy.routeRetryMax
+            }
+          });
+        }
+      }
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          runLimit,
+          timelineLimit,
+          heatmapLimit
+        },
+        route: {
+          requested: !!route,
+          min_level: routeMinLevel,
+          should_route: !!shouldRoute
+        },
+        anomaly,
+        routed
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

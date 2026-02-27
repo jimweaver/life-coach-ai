@@ -167,6 +167,10 @@ Deploy event analytics APIs:
 - `GET /jobs/deploy-events/trend`
   - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `runLimit`, `timelineLimit`, `heatmapLimit`
   - returns per-run timeline buckets + failure heatmap
+- `GET /jobs/deploy-events/anomalies`
+  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `runLimit`, `timelineLimit`, `heatmapLimit`
+  - optional controls: `emitAudit`, `route`, `routeMinLevel`, `routeUserId`, `routeChannel`
+  - detects run error-rate regressions, abort ratio spikes, duration regressions, and bucket volume spikes
 
 Validation:
 
@@ -174,6 +178,7 @@ Validation:
 npm run test:deploy-sink
 npm run test:deploy-analytics
 npm run test:deploy-trend
+npm run test:deploy-anomaly
 ```
 
 ---
@@ -270,6 +275,19 @@ npm run test:deploy-trend
 | `DEPLOY_WRAPPER_EVENT_SINK` | postgres | Deploy event sink mode (`postgres` or `none`) |
 | `DEPLOY_WRAPPER_EVENT_TABLE` | deploy_run_events | Deploy event sink table name |
 | `DEPLOY_WRAPPER_EVENT_SOURCE` | deploy-wrapper | Source label written to event sink |
+| `DEPLOY_TREND_ANOMALY_WARN_ERROR_RATE` | 0.25 | Warn threshold for per-run error rate |
+| `DEPLOY_TREND_ANOMALY_CRITICAL_ERROR_RATE` | 0.5 | Critical threshold for per-run error rate |
+| `DEPLOY_TREND_ANOMALY_WARN_ABORT_RATIO` | 0.15 | Warn threshold for abort ratio |
+| `DEPLOY_TREND_ANOMALY_CRITICAL_ABORT_RATIO` | 0.3 | Critical threshold for abort ratio |
+| `DEPLOY_TREND_ANOMALY_WARN_VOLUME_SPIKE` | 2.5 | Warn multiplier for latest bucket volume spike vs baseline |
+| `DEPLOY_TREND_ANOMALY_CRITICAL_VOLUME_SPIKE` | 4.0 | Critical multiplier for latest bucket volume spike vs baseline |
+| `DEPLOY_TREND_ANOMALY_WARN_DURATION_SPIKE` | 1.8 | Warn multiplier for run duration regression |
+| `DEPLOY_TREND_ANOMALY_CRITICAL_DURATION_SPIKE` | 2.5 | Critical multiplier for run duration regression |
+| `DEPLOY_TREND_ROUTE_ENABLED` | true | Enable routing for deploy trend anomalies |
+| `DEPLOY_TREND_ROUTE_MIN_LEVEL` | warn | Minimum anomaly level eligible for routing |
+| `DEPLOY_TREND_ROUTE_USER_ID` | unset | Target user id for anomaly routing |
+| `DEPLOY_TREND_ROUTE_CHANNEL` | cron-event | Target channel for anomaly routing |
+| `DEPLOY_TREND_ROUTE_RETRY_MAX` | 1 | Retry count for anomaly routing dispatch |
 
 ---
 
