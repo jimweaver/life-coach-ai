@@ -1,0 +1,22 @@
+{
+  "name": "life-coach-ai-v2",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test:db": "node test-database.js",
+    "test:day2": "node test-day2-core-agents.js",
+    "test:day3": "node test-day3-multidomain.js",
+    "start:api": "node core/api-server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.9.3",
+    "js-yaml": "^4.1.0",
+    "morgan": "^1.10.1",
+    "pg": "^8.19.0",
+    "uuid": "^13.0.0"
+  }
+}

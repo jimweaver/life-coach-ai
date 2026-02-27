@@ -1,0 +1,151 @@
+project:
+  name: Life Coach AI
+  version: 0.1.0
+  phase: MVP-Core
+  start_date: 2026-02-26
+
+team:
+  total_agents: 14
+  current_phase: 4  # Week 1創建4個核心
+  
+models:
+  orchestrator: 
+    model: openai-codex/gpt-5.3-codex  # Codex 3.6
+    description: Main Orchestrator需要coding能力
+  
+  coding_tasks: 
+    model: anthropic/claude-opus-4-6    # Opus 4-6
+    description: 涉及複雜邏輯和倫理判斷
+  
+  general: 
+    model: kimi-coding/k2p5             # Kimi K2.5
+    description: 一般專業領域任務
+
+agents:
+  core_resident:  # 4個常駐
+    - id: main-orchestrator
+      name: Life Coach Main Orchestrator
+      model: openai-codex/gpt-5.3-codex
+      priority: CRITICAL
+      status: resident
+      description: 系統指揮中心，協調所有Agents
+      
+    - id: context-memory
+      name: Context Memory Manager
+      model: kimi-coding/k2p5
+      priority: HIGH
+      status: resident
+      description: 記憶管理，STM/MTM/LTM/Vector
+      
+    - id: safety-guardian
+      name: Safety Guardian
+      model: anthropic/claude-opus-4-6
+      priority: CRITICAL
+      status: resident
+      description: 安全守門員，每個輸出必經
+      
+    - id: career-coach
+      name: Career Coach
+      model: kimi-coding/k2p5
+      priority: HIGH
+      status: resident/on_demand
+      description: 職涯發展專家
+  
+  extended:  # 10個按需 (Week 2-4創建)
+    - id: health-coach
+      name: Health Coach
+      model: kimi-coding/k2p5
+      type: domain
+      
+    - id: finance-coach
+      name: Finance Coach
+      model: kimi-coding/k2p5
+      type: domain
+      
+    - id: skill-coach
+      name: Skill Coach
+      model: kimi-coding/k2p5
+      type: domain
+      
+    - id: relationship-coach
+      name: Relationship Coach
+      model: kimi-coding/k2p5
+      type: domain
+      
+    - id: decision-coach
+      name: Decision Coach
+      model: kimi-coding/k2p5
+      type: domain
+      
+    - id: data-collector
+      name: Data Collector
+      model: kimi-coding/k2p5
+      type: shared
+      
+    - id: progress-tracker
+      name: Progress Tracker
+      model: kimi-coding/k2p5
+      type: shared
+      
+    - id: conflict-resolver
+      name: Conflict Resolver
+      model: kimi-coding/k2p5
+      type: shared
+      
+    - id: kbi-monitor
+      name: KBI Monitor
+      model: kimi-coding/k2p5
+      type: supervisory
+      
+    - id: intervention
+      name: Intervention Scheduler
+      model: kimi-coding/k2p5
+      type: supervisory
+
+storage:
+  stm:
+    type: redis
+    host: localhost
+    port: 6379
+    ttl: 24h
+    description: 短期記憶，對話上下文
+    
+  mtm:
+    type: postgresql
+    host: localhost
+    port: 5432
+    database: life_coach
+    retention: 90d
+    description: 中期記憶，行為模式
+    
+  ltm:
+    type: s3
+    bucket: life-coach-ltm
+    retention: permanent
+    description: 長期記憶，用戶畫像
+    
+  vector:
+    type: qdrant
+    host: localhost
+    port: 6333
+    description: 向量記憶，語義檢索
+
+performance:
+  targets:
+    single_domain_response: "< 3s"
+    multi_domain_response: "< 8s"
+    emergency_response: "< 1s"
+    memory_retrieval: "< 200ms"
+
+limits:
+  max_concurrent_agents: 50  # 已修改限制
+  max_spawn_depth: 20
+  max_children_per_agent: 50
+
+monitoring:
+  enabled: true
+  metrics:
+    - response_time
+    - agent_availability
+    - error_rate
+    - user_satisfaction

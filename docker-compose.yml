@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # Redis - Short Term Memory (STM)
+  redis:
+    image: redis:7-alpine
+    container_name: life-coach-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # PostgreSQL - Medium Term Memory (MTM)
+  postgres:
+    image: postgres:16-alpine
+    container_name: life-coach-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: life_coach
+      POSTGRES_USER: coach
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-coach_password_2024}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./storage/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coach -d life_coach"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Qdrant - Vector Memory
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: life-coach-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Optional: MinIO - Long Term Memory (LTM)
+  # Uncomment when ready for production
+  # minio:
+  #   image: minio/minio:latest
+  #   container_name: life-coach-minio
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   environment:
+  #     MINIO_ROOT_USER: coach
+  #     MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-coach_password_2024}
+  #   volumes:
+  #     - minio-data:/data
+  #   command: server /data --console-address ":9001"
+  #   restart: unless-stopped
+
+volumes:
+  redis-data:
+    driver: local
+  postgres-data:
+    driver: local
+  qdrant-data:
+    driver: local
+  # minio-data:
+  #   driver: local
+
+networks:
+  default:
+    name: life-coach-network
