@@ -60,7 +60,109 @@ class DatabaseStorageManager {
     this.outboxReadyPromise = null;
     this.deployEventsReadyPromise = null;
 
+    // Query performance tracking
+    this.queryStats = {
+      total: 0,
+      errors: 0,
+      totalDuration: 0,
+      slowQueries: [], // Queries > 1000ms
+      queryTypes: {} // Group by query type
+    };
+
+    // Wrap query method for performance tracking
+    this.originalQuery = this.postgres.query.bind(this.postgres);
+    this.postgres.query = this.trackedQuery.bind(this);
+
     console.log('✅ DatabaseStorageManager initialized');
+  }
+
+  // Query performance wrapper
+  async trackedQuery(text, params) {
+    const start = Date.now();
+    const queryType = this.extractQueryType(text);
+
+    try {
+      const result = await this.originalQuery(text, params);
+      const duration = Date.now() - start;
+
+      // Update stats
+      this.queryStats.total++;
+      this.queryStats.totalDuration += duration;
+
+      if (!this.queryStats.queryTypes[queryType]) {
+        this.queryStats.queryTypes[queryType] = { count: 0, totalMs: 0, errors: 0 };
+      }
+      this.queryStats.queryTypes[queryType].count++;
+      this.queryStats.queryTypes[queryType].totalMs += duration;
+
+      // Track slow queries
+      if (duration > 1000) {
+        this.queryStats.slowQueries.push({
+          type: queryType,
+          duration,
+          timestamp: new Date().toISOString(),
+          preview: text.substring(0, 100)
+        });
+        // Keep only last 100 slow queries
+        if (this.queryStats.slowQueries.length > 100) {
+          this.queryStats.slowQueries.shift();
+        }
+      }
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - start;
+      this.queryStats.total++;
+      this.queryStats.errors++;
+      this.queryStats.totalDuration += duration;
+
+      if (!this.queryStats.queryTypes[queryType]) {
+        this.queryStats.queryTypes[queryType] = { count: 0, totalMs: 0, errors: 0 };
+      }
+      this.queryStats.queryTypes[queryType].count++;
+      this.queryStats.queryTypes[queryType].errors++;
+      this.queryStats.queryTypes[queryType].totalMs += duration;
+
+      throw error;
+    }
+  }
+
+  extractQueryType(sql) {
+    if (!sql) return 'unknown';
+    const upper = sql.trim().toUpperCase();
+    if (upper.startsWith('SELECT')) return 'SELECT';
+    if (upper.startsWith('INSERT')) return 'INSERT';
+    if (upper.startsWith('UPDATE')) return 'UPDATE';
+    if (upper.startsWith('DELETE')) return 'DELETE';
+    if (upper.startsWith('CREATE')) return 'CREATE';
+    if (upper.startsWith('ALTER')) return 'ALTER';
+    return 'OTHER';
+  }
+
+  getQueryMetrics() {
+    const avgDuration = this.queryStats.total > 0
+      ? Math.round(this.queryStats.totalDuration / this.queryStats.total)
+      : 0;
+
+    const queryTypeStats = Object.entries(this.queryStats.queryTypes).map(([type, stats]) => ({
+      type,
+      count: stats.count,
+      avg_ms: stats.count > 0 ? Math.round(stats.totalMs / stats.count) : 0,
+      error_rate: stats.count > 0 ? ((stats.errors / stats.count) * 100).toFixed(2) + '%' : '0%'
+    })).sort((a, b) => b.count - a.count);
+
+    return {
+      total_queries: this.queryStats.total,
+      total_errors: this.queryStats.errors,
+      error_rate: this.queryStats.total > 0
+        ? ((this.queryStats.errors / this.queryStats.total) * 100).toFixed(2) + '%'
+        : '0%',
+      avg_duration_ms: avgDuration,
+      slow_query_count: this.queryStats.slowQueries.length,
+      recent_slow_queries: this.queryStats.slowQueries.slice(-5),
+      query_types: queryTypeStats,
+      generated_at: new Date().toISOString()
+    };
   }
 
   // ========== STM (Short Term Memory) - Redis ==========

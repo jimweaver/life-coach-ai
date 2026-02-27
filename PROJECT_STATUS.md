@@ -686,13 +686,25 @@ Updated: 2026-02-27
    - Added npm script: `test:latency-metrics`
    - Graceful shutdown test passes
 
+74. **Database query performance tracking**
+   - Added query performance tracking to `DatabaseStorageManager`
+   - Wraps PostgreSQL query method to track execution time
+   - Tracks query types: SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, OTHER
+   - Tracks slow queries (>1000ms) with preview and timestamp
+   - Maintains last 100 slow queries in memory
+   - Added `GET /metrics/queries` endpoint
+   - Returns: total queries, errors, avg duration, query type breakdown, slow queries
+   - Added test: `test-query-metrics.js`
+   - Added npm script: `test:query-metrics`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add database query performance tracking
-2. Add deploy trend telemetry rollup for trend dashboards
-3. Add API response size metrics
+1. Add deploy trend telemetry rollup for trend dashboards
+2. Add API response size metrics
+3. Add cache hit/miss rate tracking
 
 ---
 

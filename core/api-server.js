@@ -1438,6 +1438,23 @@ async function createServer() {
     }
   });
 
+  // Database query performance metrics endpoint
+  app.get('/metrics/queries', (_req, res) => {
+    try {
+      const metrics = db.getQueryMetrics();
+      res.json({
+        ok: true,
+        ...metrics
+      });
+    } catch (err) {
+      console.error('[Query Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   app.post('/chat', async (req, res) => {
     try {
       const errors = validateChatPayload(req.body);

@@ -72,6 +72,7 @@
     "test:deep-health": "node test-deep-health.js",
     "test:orchestrator-metrics": "node test-orchestrator-metrics.js",
     "test:latency-metrics": "node test-latency-metrics.js",
+    "test:query-metrics": "node test-query-metrics.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",
     "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",
