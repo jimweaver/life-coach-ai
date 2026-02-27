@@ -13,6 +13,7 @@
     "test:e2e": "node test-e2e-api.js",
     "test:scheduler": "node test-scheduler-runner.js",
     "test:guardrails": "node test-api-guardrails.js",
+    "test:data": "node test-data-collector.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

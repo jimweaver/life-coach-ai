@@ -66,16 +66,23 @@ Updated: 2026-02-27
    - POST rate limiting (env-controlled)
    - Added guardrail test: `test-api-guardrails.js`
 
+9. **Data collector citation upgrade**
+   - Added ranked multi-source citation scoring in `core/data-collector.js`
+   - Snapshot now includes: `citations`, `confidence`, `reason`, `total_results`, `generated_at`
+   - Added fallback + authority/relevance/domain-fit scoring heuristics
+   - Orchestrator response now includes top citations with confidence line
+   - Added test: `test-data-collector.js`
+
 ---
 
 ## In progress / next
 
 1. Replace current domain heuristic stubs with real model-calling adapter (OpenClaw-compatible mode)
-2. Expand data-collector citation payload (multi-source ranking + confidence)
-3. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
-4. Extend production guardrails:
+2. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
+3. Extend production guardrails:
    - audit log normalization
    - distributed/shared rate-limit backend (Redis-based)
+4. Add external-source quality checks (freshness + duplicate suppression) for data collector
 5. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---
@@ -95,5 +102,6 @@ npm run test:day3
 npm run test:day4
 npm run test:scheduler
 npm run test:guardrails
+npm run test:data
 npm run test:e2e
 ```

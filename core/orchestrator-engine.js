@@ -153,8 +153,9 @@ class OrchestratorEngine {
   composeUserResponse(domainRun) {
     const blocks = domainRun.outputs.map((o) => {
       const recs = o.recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n');
-      const sourceLine = o.sources?.results?.[0]?.title
-        ? `\n來源參考：${o.sources.results[0].title}${o.sources.results[0].url ? ` (${o.sources.results[0].url})` : ''}`
+      const cites = o.sources?.citations || [];
+      const sourceLine = cites.length
+        ? `\n來源參考（可信度 ${Math.round((o.sources?.confidence || 0) * 100)}%）：${cites.slice(0, 2).map((c, i) => `${i + 1}) ${c.title}${c.url ? ` (${c.url})` : ''}`).join('；')}`
         : '';
       return `【${o.domain.toUpperCase()} | model: ${o.model || 'n/a'}】\n${o.summary}\n\n建議：\n${recs}${sourceLine}`;
     });
