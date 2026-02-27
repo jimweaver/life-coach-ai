@@ -224,15 +224,46 @@ async function createServer() {
   };
   const routeLatencies = {}; // Per-route tracking
 
+  // Response size tracking
+  const responseSizeHistogram = {
+    under1kb: 0,      // <1KB
+    under10kb: 0,     // 1-10KB
+    under50kb: 0,     // 10-50KB
+    under100kb: 0,    // 50-100KB
+    under500kb: 0,    // 100-500KB
+    under1mb: 0,      // 500KB-1MB
+    over1mb: 0        // >1MB
+  };
+  const routeResponseSizes = {}; // Per-route response size tracking
+
   app.use((req, res, next) => {
     const start = Date.now();
     const route = req.route?.path || req.path;
+
+    // Capture response size
+    const originalWrite = res.write;
+    const originalEnd = res.end;
+    let responseBytes = 0;
+
+    res.write = function(chunk, encoding) {
+      if (chunk) {
+        responseBytes += Buffer.byteLength(chunk, encoding);
+      }
+      return originalWrite.call(this, chunk, encoding);
+    };
+
+    res.end = function(chunk, encoding) {
+      if (chunk) {
+        responseBytes += Buffer.byteLength(chunk, encoding);
+      }
+      return originalEnd.call(this, chunk, encoding);
+    };
 
     res.on('finish', () => {
       const duration = Date.now() - start;
       const status = res.statusCode;
 
-      // Update histogram
+      // Update latency histogram
       if (duration < 10) latencyHistogram.under10++;
       else if (duration < 50) latencyHistogram.under50++;
       else if (duration < 100) latencyHistogram.under100++;
@@ -242,6 +273,16 @@ async function createServer() {
       else if (duration < 2000) latencyHistogram.under2000++;
       else latencyHistogram.over2000++;
 
+      // Update response size histogram (bytes to KB)
+      const sizeKB = responseBytes / 1024;
+      if (sizeKB < 1) responseSizeHistogram.under1kb++;
+      else if (sizeKB < 10) responseSizeHistogram.under10kb++;
+      else if (sizeKB < 50) responseSizeHistogram.under50kb++;
+      else if (sizeKB < 100) responseSizeHistogram.under100kb++;
+      else if (sizeKB < 500) responseSizeHistogram.under500kb++;
+      else if (sizeKB < 1024) responseSizeHistogram.under1mb++;
+      else responseSizeHistogram.over1mb++;
+
       // Update per-route stats
       if (!routeLatencies[route]) {
         routeLatencies[route] = { count: 0, totalMs: 0, errors: 0 };
@@ -249,6 +290,13 @@ async function createServer() {
       routeLatencies[route].count++;
       routeLatencies[route].totalMs += duration;
       if (status >= 400) routeLatencies[route].errors++;
+
+      // Update per-route response size stats
+      if (!routeResponseSizes[route]) {
+        routeResponseSizes[route] = { count: 0, totalBytes: 0 };
+      }
+      routeResponseSizes[route].count++;
+      routeResponseSizes[route].totalBytes += responseBytes;
     });
 
     next();
@@ -1438,6 +1486,45 @@ async function createServer() {
     }
   });
 
+  // API response size metrics endpoint
+  app.get('/metrics/response-size', (_req, res) => {
+    try {
+      const totalResponses = Object.values(responseSizeHistogram).reduce((a, b) => a + b, 0);
+
+      // Calculate per-route average response sizes
+      const routeStats = Object.entries(routeResponseSizes).map(([route, stats]) => ({
+        route,
+        count: stats.count,
+        avg_kb: Math.round((stats.totalBytes / stats.count) / 1024 * 100) / 100,
+        total_mb: Math.round((stats.totalBytes / 1024 / 1024) * 100) / 100
+      })).sort((a, b) => b.count - a.count);
+
+      // Find largest routes by total bytes
+      const largestRoutes = [...routeStats].sort((a, b) =>
+        (routeResponseSizes[b.route]?.totalBytes || 0) - (routeResponseSizes[a.route]?.totalBytes || 0)
+      ).slice(0, 10);
+
+      res.json({
+        ok: true,
+        histogram: responseSizeHistogram,
+        total_responses: totalResponses,
+        routes: routeStats.slice(0, 20),
+        largest_routes: largestRoutes.map(r => ({
+          route: r.route,
+          total_mb: r.total_mb,
+          count: r.count
+        })),
+        generated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('[Response Size Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   // Database query performance metrics endpoint
   app.get('/metrics/queries', (_req, res) => {
     try {
@@ -1469,6 +1556,12 @@ async function createServer() {
       ]);
 
       const totalRequests = Object.values(latencyHistogram).reduce((a, b) => a + b, 0);
+      const totalResponses = Object.values(responseSizeHistogram).reduce((a, b) => a + b, 0);
+
+      // Calculate total response size
+      const totalResponseBytes = Object.values(routeResponseSizes).reduce(
+        (sum, stats) => sum + stats.totalBytes, 0
+      );
 
       res.json({
         ok: true,
@@ -1477,7 +1570,14 @@ async function createServer() {
           orchestrator_requests: orchestratorMetrics.requests.total,
           db_queries: queryMetrics.total_queries,
           db_pool_utilization: Math.round(poolMetrics.postgres.utilization * 100) + '%',
-          overall_health: poolMetrics.healthy.overall && orchestratorMetrics.errors.rate === '0%'
+          overall_health: poolMetrics.healthy.overall && orchestratorMetrics.errors.rate === '0%',
+          response_stats: {
+            total_responses: totalResponses,
+            total_mb: Math.round((totalResponseBytes / 1024 / 1024) * 100) / 100,
+            avg_kb_per_response: totalResponses > 0
+              ? Math.round((totalResponseBytes / totalResponses / 1024) * 100) / 100
+              : 0
+          }
         },
         services: {
           orchestrator: orchestratorMetrics,
@@ -1486,6 +1586,10 @@ async function createServer() {
           latency: {
             histogram: latencyHistogram,
             total_requests: totalRequests
+          },
+          response_size: {
+            histogram: responseSizeHistogram,
+            total_responses: totalResponses
           }
         },
         generated_at: new Date().toISOString()

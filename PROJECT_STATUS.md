@@ -718,13 +718,25 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-trend-rollup`
    - Graceful shutdown test passes
 
+77. **API response size metrics**
+   - Added response size tracking middleware to API server
+   - Tracks 7 size buckets: under1kb, under10kb, under50kb, under100kb, under500kb, under1mb, over1mb
+   - Tracks per-route stats: count, avg_kb, total_mb
+   - Tracks largest routes by total bytes transferred
+   - Added `GET /metrics/response-size` endpoint
+   - Returns histogram, total_responses, routes, largest_routes
+   - Integrated into `/metrics/dashboard` endpoint
+   - Added test: `test-response-size-metrics.js`
+   - Added npm script: `test:response-size`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add API response size metrics
-2. Add cache hit/miss rate tracking
-3. Add webhook delivery success rate tracking
+1. Add cache hit/miss rate tracking
+2. Add webhook delivery success rate tracking
+3. Add model call latency tracking
 
 ---
 
