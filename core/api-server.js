@@ -26,6 +26,7 @@ const DeployTrendAnomalyDetector = require('./deploy-trend-anomaly');
 const DeployTrendTelemetryAlertDetector = require('./deploy-trend-telemetry-alert');
 const DeployTrendTelemetrySuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert');
 const DeployTrendTelemetrySuppressionAlertSuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert-suppression-alert');
+const DeployEventSink = require('../scripts/deploy-event-sink');
 const {
   isUuid,
   createRateLimiter,
@@ -171,6 +172,20 @@ async function createServer() {
   let isShuttingDown = false;
   let activeRequests = 0;
   let shutdownPromise = null;
+
+  // Shutdown event sink for deploy observability
+  const shutdownEventSinkEnabled = String(process.env.SHUTDOWN_EVENT_SINK_ENABLED || 'true').toLowerCase() !== 'false';
+  let shutdownEventSink = null;
+  if (shutdownEventSinkEnabled) {
+    try {
+      shutdownEventSink = new DeployEventSink({
+        runId: process.env.SHUTDOWN_EVENT_SINK_RUN_ID || `api-shutdown-${Date.now()}`,
+        source: process.env.SHUTDOWN_EVENT_SINK_SOURCE || 'api-server-shutdown'
+      });
+    } catch (_e) {
+      // best effort - continue without sink if initialization fails
+    }
+  }
 
   app.use((req, res, next) => {
     if (isShuttingDown && req.path !== '/health' && req.path !== '/ready') {
@@ -4060,16 +4075,46 @@ async function createServer() {
     });
   };
 
-  const shutdown = async ({ exit = false } = {}) => {
+  const shutdown = async ({ exit = false, reason = 'signal' } = {}) => {
     if (!shutdownPromise) {
       shutdownPromise = (async () => {
+        const shutdownStart = Date.now();
         isShuttingDown = true;
 
+        // Log shutdown start event
+        if (shutdownEventSink) {
+          await shutdownEventSink.write({
+            event: 'api.shutdown.start',
+            level: 'info',
+            reason,
+            active_requests: activeRequests,
+            grace_ms: gracefulShutdownMs,
+            ts: new Date().toISOString()
+          }).catch(() => {});
+        }
+
         await closeServerGracefully();
+        const gracefulDuration = Date.now() - shutdownStart;
+
         await Promise.allSettled([
           Promise.resolve().then(() => engine.close()),
           Promise.resolve().then(() => db.close())
         ]);
+
+        const totalDuration = Date.now() - shutdownStart;
+
+        // Log shutdown complete event
+        if (shutdownEventSink) {
+          await shutdownEventSink.write({
+            event: 'api.shutdown.end',
+            level: 'info',
+            reason,
+            graceful_duration_ms: gracefulDuration,
+            total_duration_ms: totalDuration,
+            ts: new Date().toISOString()
+          }).catch(() => {});
+          await shutdownEventSink.close().catch(() => {});
+        }
       })();
     }
 
@@ -4077,8 +4122,8 @@ async function createServer() {
     if (exit) process.exit(0);
   };
 
-  process.on('SIGINT', () => shutdown({ exit: true }));
-  process.on('SIGTERM', () => shutdown({ exit: true }));
+  process.on('SIGINT', () => shutdown({ exit: true, reason: 'SIGINT' }));
+  process.on('SIGTERM', () => shutdown({ exit: true, reason: 'SIGTERM' }));
 
   return { app, server, shutdown };
 }

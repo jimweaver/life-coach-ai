@@ -588,12 +588,21 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-telemetry-suppression-alert-suppression-alert`
    - Deployment ops + readiness docs updated with suppression-alert suppression threshold alert endpoint/test gates
 
+64. **Shutdown observability added (deploy event sink integration)**
+   - Added `DeployEventSink` integration to API server shutdown flow
+   - Logs `api.shutdown.start` event with active requests count and reason
+   - Logs `api.shutdown.end` event with graceful/total duration metrics
+   - Configurable via `SHUTDOWN_EVENT_SINK_ENABLED`, `SHUTDOWN_EVENT_SINK_RUN_ID`, `SHUTDOWN_EVENT_SINK_SOURCE`
+   - Graceful shutdown test passes with new observability hooks
+   - Deployment ops docs updated with shutdown event tracing
+
 ---
 
 ## In progress / next
 
-1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Advance skill-learning hook rollout + auto-learn validation across agents
+1. Advance skill-learning hook rollout + auto-learn validation across agents
+2. Add managed smoke orchestration stress test coverage
+3. Continue production readiness hardening (connection draining metrics)
 
 ---
 
