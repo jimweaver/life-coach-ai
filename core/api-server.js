@@ -1455,6 +1455,50 @@ async function createServer() {
     }
   });
 
+  // Consolidated metrics dashboard endpoint
+  app.get('/metrics/dashboard', async (_req, res) => {
+    try {
+      const [
+        orchestratorMetrics,
+        poolMetrics,
+        queryMetrics
+      ] = await Promise.all([
+        Promise.resolve().then(() => engine.getMetrics()),
+        Promise.resolve().then(() => db.getPoolMetrics()),
+        Promise.resolve().then(() => db.getQueryMetrics())
+      ]);
+
+      const totalRequests = Object.values(latencyHistogram).reduce((a, b) => a + b, 0);
+
+      res.json({
+        ok: true,
+        summary: {
+          api_requests: totalRequests,
+          orchestrator_requests: orchestratorMetrics.requests.total,
+          db_queries: queryMetrics.total_queries,
+          db_pool_utilization: Math.round(poolMetrics.postgres.utilization * 100) + '%',
+          overall_health: poolMetrics.healthy.overall && orchestratorMetrics.errors.rate === '0%'
+        },
+        services: {
+          orchestrator: orchestratorMetrics,
+          pools: poolMetrics,
+          queries: queryMetrics,
+          latency: {
+            histogram: latencyHistogram,
+            total_requests: totalRequests
+          }
+        },
+        generated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('[Metrics Dashboard] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   app.post('/chat', async (req, res) => {
     try {
       const errors = validateChatPayload(req.body);

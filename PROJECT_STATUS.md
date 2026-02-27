@@ -698,6 +698,15 @@ Updated: 2026-02-27
    - Added npm script: `test:query-metrics`
    - Graceful shutdown test passes
 
+75. **Consolidated metrics dashboard endpoint**
+   - Added `GET /metrics/dashboard` endpoint for unified observability
+   - Aggregates: orchestrator metrics, pool metrics, query metrics, latency histogram
+   - Returns summary with key health indicators (api_requests, db_queries, pool_utilization, overall_health)
+   - Provides single-pane view of system health
+   - Added test: `test-metrics-dashboard.js`
+   - Added npm script: `test:metrics-dashboard`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
