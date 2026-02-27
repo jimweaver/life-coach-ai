@@ -79,6 +79,7 @@
     "test:cache": "node test-cache-metrics.js",
     "test:delivery-metrics": "node test-delivery-metrics.js",
     "test:model-metrics": "node test-model-metrics.js",
+    "test:memory-metrics": "node test-memory-metrics.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",
     "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",

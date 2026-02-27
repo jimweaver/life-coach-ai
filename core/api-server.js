@@ -1576,6 +1576,38 @@ async function createServer() {
     }
   });
 
+  // Memory usage metrics endpoint
+  app.get('/metrics/memory', (_req, res) => {
+    try {
+      const memUsage = process.memoryUsage();
+      const metrics = {
+        heap_used_mb: Math.round(memUsage.heapUsed / 1024 / 1024 * 100) / 100,
+        heap_total_mb: Math.round(memUsage.heapTotal / 1024 / 1024 * 100) / 100,
+        rss_mb: Math.round(memUsage.rss / 1024 / 1024 * 100) / 100,
+        external_mb: Math.round((memUsage.external || 0) / 1024 / 1024 * 100) / 100,
+        array_buffers_mb: Math.round((memUsage.arrayBuffers || 0) / 1024 / 1024 * 100) / 100,
+        heap_utilization_percent: memUsage.heapTotal > 0
+          ? Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100 * 100) / 100
+          : 0,
+        uptime_seconds: Math.round(process.uptime()),
+        node_version: process.version,
+        platform: process.platform,
+        pid: process.pid
+      };
+      res.json({
+        ok: true,
+        ...metrics,
+        generated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('[Memory Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   // Database query performance metrics endpoint
   app.get('/metrics/queries', (_req, res) => {
     try {
@@ -1622,6 +1654,9 @@ async function createServer() {
       // Get model metrics
       const modelMetrics = engine.getModelMetrics();
 
+      // Get memory usage
+      const memUsage = process.memoryUsage();
+
       res.json({
         ok: true,
         summary: {
@@ -1652,6 +1687,13 @@ async function createServer() {
             success_rate: modelMetrics.success_rate,
             avg_duration_ms: modelMetrics.avg_duration_ms,
             slow_calls: modelMetrics.slow_calls.count
+          },
+          memory_stats: {
+            heap_used_mb: Math.round(memUsage.heapUsed / 1024 / 1024 * 100) / 100,
+            heap_utilization_percent: memUsage.heapTotal > 0
+              ? Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100 * 100) / 100
+              : 0,
+            uptime_seconds: Math.round(process.uptime())
           }
         },
         services: {
@@ -1661,6 +1703,14 @@ async function createServer() {
           cache: cacheMetrics,
           delivery: deliveryMetrics,
           model: modelMetrics,
+          memory: {
+            heap_used_mb: Math.round(memUsage.heapUsed / 1024 / 1024 * 100) / 100,
+            heap_total_mb: Math.round(memUsage.heapTotal / 1024 / 1024 * 100) / 100,
+            rss_mb: Math.round(memUsage.rss / 1024 / 1024 * 100) / 100,
+            heap_utilization_percent: memUsage.heapTotal > 0
+              ? Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100 * 100) / 100
+              : 0
+          },
           latency: {
             histogram: latencyHistogram,
             total_requests: totalRequests

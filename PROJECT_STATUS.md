@@ -769,12 +769,21 @@ Updated: 2026-02-27
    - Added npm script: `test:model-metrics`
    - Graceful shutdown test passes
 
+81. **Memory usage metrics**
+   - Added `GET /metrics/memory` endpoint
+   - Tracks: heap_used_mb, heap_total_mb, rss_mb, external_mb, array_buffers_mb
+   - Calculates heap utilization percentage
+   - Includes system info: uptime_seconds, node_version, platform, pid
+   - Integrated memory stats into `/metrics/dashboard` endpoint
+   - Added test: `test-memory-metrics.js`
+   - Added npm script: `test:memory-metrics`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add memory usage metrics
-2. Add agent execution time tracking
+1. Add agent execution time tracking
 
 ---
 
