@@ -212,6 +212,9 @@ Deploy event analytics APIs:
   - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
   - optional controls: `route`, `routeMinLevel`
   - returns telemetry-alert route candidacy + suppression state snapshot (including remaining cooldown / duplicate window)
+- `GET /jobs/deploy-events/anomalies/telemetry/alerts/suppression/trend`
+  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+  - returns time-bucketed suppression rollups with cooldown vs duplicate-window breakdown
 
 Validation:
 
@@ -225,6 +228,7 @@ npm run test:deploy-telemetry-trend
 npm run test:deploy-telemetry-alert
 npm run test:deploy-telemetry-alert-suppression
 npm run test:deploy-telemetry-alert-suppression-observability
+npm run test:deploy-telemetry-alert-suppression-trend
 ```
 
 ---
