@@ -7,6 +7,8 @@ const { v4: uuidv4 } = require('uuid');
 
 const OrchestratorEngine = require('./orchestrator-engine');
 const DatabaseStorageManager = require('./storage/database-storage');
+const KBIMonitor = require('./kbi-monitor');
+const InterventionEngine = require('./intervention-engine');
 
 async function createServer() {
   const app = express();
@@ -14,6 +16,8 @@ async function createServer() {
 
   const engine = await new OrchestratorEngine().init();
   const db = new DatabaseStorageManager();
+  const kbiMonitor = new KBIMonitor();
+  const interventionEngine = new InterventionEngine();
 
   app.use(helmet());
   app.use(cors());
@@ -94,6 +98,60 @@ async function createServer() {
         Number(req.query.limit || 30)
       );
       res.json({ user_id: req.params.userId, metric: req.params.metric, data });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/monitor/:userId', async (req, res) => {
+    try {
+      const metrics = ['goal_adherence', 'engagement_score', 'mood_trend', 'skill_progress'];
+      const snapshot = {};
+
+      for (const m of metrics) {
+        const rows = await db.getKBIMetrics(req.params.userId, m, 'daily', 1);
+        snapshot[m] = rows[0]?.metric_value ?? null;
+      }
+
+      const cleaned = Object.fromEntries(Object.entries(snapshot).filter(([, v]) => v !== null));
+      const evaluation = kbiMonitor.evaluateSnapshot(cleaned);
+
+      res.json({ user_id: req.params.userId, snapshot: cleaned, evaluation });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/intervention/morning/:userId', async (req, res) => {
+    try {
+      const profile = await db.getUserProfile(req.params.userId);
+      const message = interventionEngine.buildMorningCheckIn({ profile: profile || {} });
+      res.json({ user_id: req.params.userId, message });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/intervention/weekly/:userId', async (req, res) => {
+    try {
+      const metrics = ['goal_adherence', 'engagement_score', 'mood_trend'];
+      const summary = {};
+      for (const m of metrics) {
+        const rows = await db.getKBIMetrics(req.params.userId, m, 'daily', 1);
+        summary[m] = rows[0]?.metric_value ?? 'n/a';
+      }
+      const message = interventionEngine.buildWeeklyReview(summary);
+      res.json({ user_id: req.params.userId, message });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/intervention/risk', async (req, res) => {
+    try {
+      const alerts = req.body?.alerts || [];
+      const message = interventionEngine.buildRiskIntervention(alerts);
+      res.json({ message, hasIntervention: !!message });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

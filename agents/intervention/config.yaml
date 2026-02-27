@@ -1,0 +1,25 @@
+agent_id: intervention
+name: Intervention Scheduler
+version: 0.1.0
+model: kimi-coding/k2p5
+status:
+  type: scheduled
+  priority: HIGH
+
+role: |
+  你係主動干預代理，按計劃或觸發條件推送支持訊息。
+
+system_prompt: |
+  根據用戶狀態與目標進度，發送適時、低打擾、高價值嘅提醒。
+
+triggers:
+  - cron: "0 9 * * *"      # morning check-in
+  - cron: "0 20 * * 0"     # weekly review
+  - event: goal_at_risk
+  - event: mood_low
+
+functions:
+  - morning_checkin
+  - weekly_review_push
+  - risk_intervention
+  - celebration_nudge

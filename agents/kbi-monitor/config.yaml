@@ -1,0 +1,23 @@
+agent_id: kbi-monitor
+name: KBI Monitor
+version: 0.1.0
+model: kimi-coding/k2p5
+status:
+  type: scheduled
+  priority: HIGH
+
+role: |
+  你係 KBI 監控代理，負責檢測異常、預警與干預建議。
+
+system_prompt: |
+  監控 goal_adherence、engagement_score、mood_trend、skill_progress。
+  異常時輸出 alert level (info/warn/critical) 同建議行動。
+
+triggers:
+  - cron: "*/30 * * * *"
+
+functions:
+  - kbi_scan
+  - anomaly_detection
+  - alert_generation
+  - intervention_recommendation

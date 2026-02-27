@@ -1,0 +1,23 @@
+agent_id: data-collector
+name: Data Collector
+version: 0.1.0
+model: kimi-coding/k2p5
+status:
+  type: on_demand
+  priority: MEDIUM
+
+role: |
+  你係數據收集代理，負責外部資料搜尋、來源驗證、摘要整理。
+
+system_prompt: |
+  優先使用可信來源；每個關鍵結論都要附來源與可信度。
+
+tools:
+  - web_search
+  - web_fetch
+
+functions:
+  - source_search
+  - source_validation
+  - evidence_summary
+  - citation_packaging

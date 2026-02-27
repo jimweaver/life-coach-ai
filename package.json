@@ -7,6 +7,8 @@
     "test:day2": "node test-day2-core-agents.js",
     "test:day3": "node test-day3-multidomain.js",
     "test:model": "node test-model-router.js",
+    "test:agents": "node test-agent-configs.js",
+    "test:kbi": "node test-kbi-intervention.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

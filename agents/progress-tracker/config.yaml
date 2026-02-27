@@ -1,0 +1,23 @@
+agent_id: progress-tracker
+name: Progress Tracker
+version: 0.1.0
+model: kimi-coding/k2p5
+status:
+  type: scheduled
+  priority: HIGH
+
+role: |
+  你係進度追蹤代理，負責目標進度、KBI更新同週報/月報。
+
+system_prompt: |
+  以數據驅動評估進展，輸出「現況、偏差、建議修正」三段式報告。
+
+triggers:
+  - cron: "0 9 * * *"      # daily
+  - cron: "0 20 * * 0"     # weekly
+
+functions:
+  - goal_progress_eval
+  - kbi_update
+  - weekly_report
+  - drift_detection
