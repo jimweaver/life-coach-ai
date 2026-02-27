@@ -27,7 +27,10 @@ class OrchestratorEngine {
     const domainMap = {
       career: ['工作', '職涯', '轉職', '升遷', '面試', '履歷', 'career', 'job'],
       health: ['健康', '壓力', '焦慮', '睡眠', 'health', 'stress'],
-      finance: ['財務', '錢', '投資', '預算', 'finance', 'money']
+      finance: ['財務', '錢', '投資', '預算', 'finance', 'money'],
+      skill: ['技能', '學習', '課程', '證書', 'portfolio', 'skill'],
+      relationship: ['關係', '溝通', '同事', '伴侶', '家人', 'relationship'],
+      decision: ['決定', '選擇', '兩難', '取捨', 'decision']
     };
 
     const matchedDomains = [];
@@ -83,7 +86,10 @@ class OrchestratorEngine {
     const domainToAgentId = {
       career: 'career-coach',
       health: 'health-coach',
-      finance: 'finance-coach'
+      finance: 'finance-coach',
+      skill: 'skill-coach',
+      relationship: 'relationship-coach',
+      decision: 'decision-coach'
     };
 
     const outputs = await Promise.all(

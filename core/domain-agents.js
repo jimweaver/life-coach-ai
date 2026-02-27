@@ -47,10 +47,61 @@ class DomainAgents {
     };
   }
 
+  async handleSkill(input, context) {
+    return {
+      agent_id: 'skill-coach',
+      domain: 'skill',
+      summary: '技能面向重點係「目標能力 → 學習路徑 → 可驗證成果」。',
+      recommendations: [
+        '先定義目標能力清單（最多 3 項）避免分心。',
+        '用 30/60/90 日學習節點做里程碑管理。',
+        '每兩週輸出一個可展示成果（demo/筆記/作品）。'
+      ],
+      constraints: ['每週固定時段學習', '避免同時開太多課程'],
+      confidence: 0.75,
+      metadata: { active_goals: context.active_goals?.length || 0 }
+    };
+  }
+
+  async handleRelationship(input, context) {
+    return {
+      agent_id: 'relationship-coach',
+      domain: 'relationship',
+      summary: '人際面向重點係先釐清目標，再用低衝突溝通框架。',
+      recommendations: [
+        '用「事實-感受-需要-請求」格式準備對話。',
+        '先對齊共同目標，再討論分歧，降低對抗。',
+        '高張力情境先降溫（暫停 20 分鐘）再重啟對話。'
+      ],
+      constraints: ['避免情緒高峰時做重大結論'],
+      confidence: 0.73,
+      metadata: { context_messages: context.recent_messages?.length || 0 }
+    };
+  }
+
+  async handleDecision(input, context) {
+    return {
+      agent_id: 'decision-coach',
+      domain: 'decision',
+      summary: '決策面向建議用矩陣法，先比較風險再看可逆性。',
+      recommendations: [
+        '列出選項 A/B/C 及成功條件。',
+        '用「影響/風險/可逆性/時間窗口」打分。',
+        '先試行可逆方案，保留調整空間。'
+      ],
+      constraints: ['高不可逆決策需加一輪冷靜期'],
+      confidence: 0.77,
+      metadata: { profile_exists: !!context.profile }
+    };
+  }
+
   async run(domain, input, context) {
     if (domain === 'career') return this.handleCareer(input, context);
     if (domain === 'health') return this.handleHealth(input, context);
     if (domain === 'finance') return this.handleFinance(input, context);
+    if (domain === 'skill') return this.handleSkill(input, context);
+    if (domain === 'relationship') return this.handleRelationship(input, context);
+    if (domain === 'decision') return this.handleDecision(input, context);
 
     return {
       agent_id: 'general',
