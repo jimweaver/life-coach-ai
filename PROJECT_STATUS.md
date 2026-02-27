@@ -839,13 +839,25 @@ Updated: 2026-02-27
    - Added npm script: `test:metrics-alerts`
    - Graceful shutdown test passes
 
+87. **OpenClaw integration documentation**
+   - Created comprehensive OpenClaw integration guide
+   - `docs/OPENCLAW_INTEGRATION.md` - Master integration guide
+   - `docs/TELEGRAM_BOT_SETUP.md` - Telegram bot configuration
+   - `docs/CRON_SETUP.md` - Scheduled interventions setup
+   - `docs/TOOLS_SETUP.md` - Tool registration for agents
+   - `skill-wrapper/life-coach-skill.js` - Skill implementation
+   - `scripts/setup-openclaw-integration.sh` - Automated setup script
+   - Documents all 4 integration methods: skills, channels, cron, tools
+   - Includes architecture diagram and troubleshooting
+
 ---
 
 ## In progress / next
 
-1. Create alerting rules for Prometheus Alertmanager
-2. Performance optimization review
-3. Load testing and capacity planning
+1. Run setup script to integrate Life Coach into OpenClaw
+2. Create Telegram bot and add token to config
+3. Configure cron jobs for morning interventions
+4. Test end-to-end integration
 
 ---
 
