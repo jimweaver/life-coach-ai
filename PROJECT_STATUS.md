@@ -596,11 +596,20 @@ Updated: 2026-02-27
    - Graceful shutdown test passes with new observability hooks
    - Deployment ops docs updated with shutdown event tracing
 
+65. **Skill-learning hook integrated into Life Coach**
+   - Added module: `core/skill-learning.js` (adapted from billgates workspace)
+   - Supports intent detection for skill creation (English + Chinese)
+   - Integrates with billgates skill-learn.js for analysis reports
+   - Provides `buildResponse()` for formatted user responses
+   - Added test: `test-skill-learning.js` with full coverage
+   - Added npm script: `test:skill-learning`
+   - All tests pass (intent detection, description extraction, response building)
+
 ---
 
 ## In progress / next
 
-1. Advance skill-learning hook rollout + auto-learn validation across agents
+1. Integrate skill-learning into orchestrator message flow
 2. Add managed smoke orchestration stress test coverage
 3. Continue production readiness hardening (connection draining metrics)
 

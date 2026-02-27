@@ -64,6 +64,7 @@
     "test:canary-drift-suppression": "node test-canary-drift-suppression.js",
     "test:canary-drift-suppression-observability": "node test-canary-drift-suppression-observability.js",
     "test:graceful": "node test-graceful-shutdown.js",
+    "test:skill-learning": "node test-skill-learning.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",
     "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",
