@@ -1,111 +1,298 @@
-# Life Coach AI
+# 🧠 Life Coach AI
 
-**版本**: v0.1.0 (MVP-Core)  
-**日期**: 2026-02-26  
-**目標**: 14-Agent Multi-Agent Life Coach 系統
+A multi-agent personal development platform that provides intelligent coaching across career, health, finance, skills, relationships, and decision-making domains.
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7-red)](https://redis.io/)
 
-## 項目結構
+## ✨ Features
 
-```
-workspace-life-coach-v2/
-├── agents/                    # Agent 定義
-│   ├── orchestrator/          # Main Orchestrator (Codex 3.6)
-│   ├── context-memory/        # Context Memory (Kimi K2.5)
-│   ├── safety-guardian/       # Safety Guardian (Opus 4-6)
-│   └── career-coach/          # Career Coach (Kimi K2.5)
-├── core/                      # 核心邏輯
-├── memory/                    # 記憶系統
-│   ├── stm/                   # 短期記憶
-│   ├── mtm/                   # 中期記憶
-│   └── ltm/                   # 長期記憶
-├── storage/                   # 存儲配置
-│   ├── redis/                 # Redis 配置
-│   ├── postgres/              # PostgreSQL 配置
-│   └── qdrant/                # Qdrant 配置
-├── tests/                     # 測試
-├── config/                    # 配置文件
-└── docs/                      # 文檔
-```
+### 🎯 Core Coaching
+- **Multi-Domain Intelligence**: Career, Health, Finance, Skills, Relationships, Decision-making
+- **14 Specialized Agents**: Each domain has dedicated AI agents with expertise
+- **Context-Aware**: Maintains conversation history and user profiles
+- **Multi-Language**: Supports English, Chinese (Cantonese/Mandarin)
 
----
+### 🏗️ Architecture
+- **Orchestrator Engine**: Intelligent routing and conflict resolution
+- **Multi-Tier Memory**: Redis (short-term) + PostgreSQL (medium-term)
+- **Safety-First**: Built-in guardrails, rate limiting, emergency detection
+- **Model Routing**: Automatic model selection (Claude, GPT, Kimi)
 
-## 14個 Agents 設計
+### 📊 Observability
+- **13 Metrics Endpoints**: Comprehensive monitoring and alerting
+- **Prometheus Export**: Native metrics scraping support
+- **Grafana Dashboards**: 3 pre-built dashboards
+- **Alert Thresholds**: Configurable warning/critical alerts
 
-### 4個核心 (常駐)
-| # | Agent | 模型 | 狀態 |
-|---|-------|------|------|
-| 1 | Main Orchestrator | Codex 3.6 | 常駐 |
-| 8 | Context Memory | Kimi K2.5 | 常駐 |
-| 14 | Safety Guardian | Opus 4-6 | 常駐 |
-| 2 | Career Coach | Kimi K2.5 | 常駐/按需 |
+### 🔧 Operations
+- **Scheduled Interventions**: Morning coaching, KBI monitoring
+- **Dead-Letter Handling**: Retry with exponential backoff
+- **Canary Deployments**: Automated rollout verification
+- **Graceful Shutdown**: Zero-downtime deployments
 
-### 10個擴展 (按需)
-| # | Agent | 類型 |
-|---|-------|------|
-| 3 | Health Coach | Domain |
-| 4 | Finance Coach | Domain |
-| 5 | Skill Coach | Domain |
-| 6 | Relationship Coach | Domain |
-| 7 | Decision Coach | Domain |
-| 9 | Data Collector | Shared |
-| 10 | Progress Tracker | Shared |
-| 11 | Conflict Resolver | Shared |
-| 12 | KBI Monitor | Supervisory |
-| 13 | Intervention | Supervisory |
+## 🚀 Quick Start
 
----
+### Prerequisites
 
-## 技術棧
-
-### Agents
-- **Main Orchestrator**: OpenAI Codex 3.6
-- **Safety Guardian**: Anthropic Opus 4-6
-- **其他**: Kimi K2.5
-
-### 存儲
-- **STM (短期記憶)**: Redis
-- **MTM (中期記憶)**: PostgreSQL
-- **LTM (長期記憶)**: S3/MinIO
-- **Vector (向量記憶)**: Qdrant
-
-### 基礎設施
-- Docker + Docker Compose
-- OpenClaw Multi-Agent System
-
----
-
-## 快速開始
-
-### 啟動數據庫
 ```bash
-docker-compose up -d redis postgres qdrant
+# macOS
+brew install node@22 postgresql@16 redis
+
+# Start services
+brew services start postgresql@16
+brew services start redis
 ```
 
-### 創建 Agents
+### Installation
+
 ```bash
-# 核心4個
-openclaw agent create --config agents/orchestrator/config.yaml
-openclaw agent create --config agents/context-memory/config.yaml
-openclaw agent create --config agents/safety-guardian/config.yaml
-openclaw agent create --config agents/career-coach/config.yaml
+# Clone the repository
+git clone https://github.com/jimweaver/life-coach-ai.git
+cd life-coach-ai
+
+# Install dependencies
+npm install
+
+# Set up environment
+cp .env.example .env
+# Edit .env with your configuration
+
+# Initialize database
+npm run db:migrate
 ```
 
-### 運行測試
+### Start the API
+
 ```bash
+# Development mode
+npm run dev
+
+# Production mode
+npm run deploy:up
+```
+
+The API will be available at `http://localhost:8787`
+
+## 📡 API Endpoints
+
+### Core Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/chat` | POST | Get coaching advice |
+| `/profile/:userId` | GET/POST | User profile management |
+| `/goals/:userId` | GET/POST | Goal tracking |
+| `/monitor/:userId` | GET | KBI monitoring |
+| `/intervention/morning/:userId` | GET | Morning intervention |
+
+### Health & Metrics
+
+| Endpoint | Description |
+|----------|-------------|
+| `/health` | Basic health check |
+| `/health/deep` | Comprehensive diagnostics |
+| `/ready` | Production readiness |
+| `/metrics/dashboard` | Unified metrics view |
+| `/metrics/prometheus` | Prometheus scraping |
+
+### Scheduler
+
+| Endpoint | Description |
+|----------|-------------|
+| `/jobs/run-monitor-cycle` | Trigger KBI monitoring |
+| `/jobs/run-morning-cycle` | Trigger morning interventions |
+| `/jobs/dead-letter` | View dead-letter queue |
+| `/jobs/delivery/metrics` | Delivery metrics |
+
+## 💬 Example Usage
+
+### Get Coaching Advice
+
+```bash
+curl -X POST http://localhost:8787/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "message": "I want to change careers to software engineering"
+  }'
+```
+
+**Response:**
+```json
+{
+  "mode": "single_domain",
+  "domain": "career",
+  "response": "【CAREER | model: claude-opus-4-6】\nI understand you're considering a career transition to software engineering...",
+  "sources": {
+    "citations": [...],
+    "confidence": 0.85
+  }
+}
+```
+
+### Get User Profile
+
+```bash
+curl http://localhost:8787/profile/550e8400-e29b-41d4-a716-446655440000
+```
+
+### Set a Goal
+
+```bash
+curl -X POST http://localhost:8787/goals/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain": "career",
+    "title": "Complete software engineering bootcamp",
+    "target_date": "2026-06-01"
+  }'
+```
+
+## 🏛️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      API Layer                           │
+│         (Express.js + Guardrails + Rate Limit)          │
+├─────────────────────────────────────────────────────────┤
+│                   Orchestrator Engine                    │
+│    (Intent Classification → Agent Routing → Response)   │
+├─────────────────────────────────────────────────────────┤
+│                     14 AI Agents                         │
+│  Career │ Health │ Finance │ Skills │ Relationship │ ... │
+├─────────────────────────────────────────────────────────┤
+│                   Data & Memory                          │
+│        Redis (STM)         │      PostgreSQL (MTM)      │
+│   - Sessions               │   - Users                  │
+│   - Rate limits            │   - Conversations          │
+│   - Cache                  │   - Goals                  │
+│                            │   - Audit logs             │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 📊 Observability
+
+### Metrics Dashboard
+
+```bash
+# View all metrics
+curl http://localhost:8787/metrics/dashboard | jq .
+
+# Prometheus format
+curl http://localhost:8787/metrics/prometheus
+
+# Active alerts
+curl http://localhost:8787/metrics/alerts
+```
+
+### Grafana Dashboards
+
+Import from `config/grafana/`:
+- `dashboard-overview.json` - Key metrics at a glance
+- `dashboard-performance.json` - Memory & performance deep dive
+- `dashboard-integrations.json` - Model & delivery metrics
+
+## 🔧 Configuration
+
+### Environment Variables
+
+```bash
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/life_coach
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# API
+PORT=8787
+RATE_LIMIT_BACKEND=redis
+
+# Models
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+MOONSHOT_API_KEY=sk-...
+
+# Cron
+CRON_DELIVERY_MODE=redis
+CRON_EVENT_REDIS_LIST_KEY=lifecoach:cron-events
+
+# Prometheus
+PROMETHEUS_METRICS_PREFIX=lifecoach
+```
+
+### Alert Thresholds
+
+```bash
+# Latency (ms)
+METRICS_ALERT_LATENCY_WARN_MS=1000
+METRICS_ALERT_LATENCY_CRITICAL_MS=3000
+
+# Error rate (0-1)
+METRICS_ALERT_ERROR_RATE_WARN=0.05
+METRICS_ALERT_ERROR_RATE_CRITICAL=0.10
+
+# Memory (0-1)
+METRICS_ALERT_MEMORY_WARN=0.80
+METRICS_ALERT_MEMORY_CRITICAL=0.95
+```
+
+## 🧪 Testing
+
+```bash
+# All tests
 npm test
+
+# Specific test suites
+npm run test:db              # Database connectivity
+npm run test:agents          # Agent configurations
+npm run test:e2e             # End-to-end flow
+npm run test:scheduler       # Scheduler cycles
+npm run test:graceful        # Graceful shutdown
+npm run test:prometheus      # Prometheus export
+npm run test:metrics-alerts  # Alert evaluation
 ```
 
+## 🔄 OpenClaw Integration
+
+Life Coach can be integrated into OpenClaw as:
+
+1. **Skill**: `tools.life_coach_chat()` callable by any agent
+2. **Channel**: Telegram bot `@lifecoach_ai_bot`
+3. **Cron**: Scheduled morning interventions
+4. **Tools**: `life_coach_get_profile`, `life_coach_set_goal`
+
+See `docs/OPENCLAW_INTEGRATION.md` for setup instructions.
+
+## 📝 Documentation
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - System architecture
+- [`docs/API.md`](docs/API.md) - API reference
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) - Deployment guide
+- [`docs/METRICS_SYSTEM.md`](docs/METRICS_SYSTEM.md) - Observability
+- [`docs/OPENCLAW_INTEGRATION.md`](docs/OPENCLAW_INTEGRATION.md) - OpenClaw setup
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- OpenClaw framework for agent orchestration
+- Claude, GPT, and Kimi models for AI capabilities
+- PostgreSQL and Redis for data infrastructure
+
 ---
 
-## 開發路線圖
+**Made with ❤️ for personal growth and development**
 
-- **Week 1**: 4個核心 Agents ✅
-- **Week 2**: +3 Domain Agents
-- **Week 3**: +2 Domain + 2 Shared
-- **Week 4**: 剩餘3個 Agents
-
----
-
-**狀態**: 🚧 Day 1 - 項目設置中
+[GitHub](https://github.com/jimweaver/life-coach-ai) • [Issues](https://github.com/jimweaver/life-coach-ai/issues) • [Discussions](https://github.com/jimweaver/life-coach-ai/discussions)
