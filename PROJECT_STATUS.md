@@ -195,13 +195,20 @@ Updated: 2026-02-27
    - `/health` now exposes dead-letter replay policy snapshot
    - Added test: `test-dead-letter-safety-policy.js`
 
+27. **Alert routing integration completed**
+   - Added `core/alert-router.js` to route delivery alerts into cron-event transport
+   - `GET /jobs/delivery/alerts` now includes `routed` delivery result when alert is actionable
+   - Routed alerts emit audit log (`alert-router` / `delivery_alert_routed`)
+   - Configurable controls: `ALERT_ROUTING_ENABLED`, `ALERT_ROUTING_MIN_LEVEL`, `ALERT_ROUTING_RETRY_MAX`
+   - Added integration test: `test-alert-routing.js`
+
 ---
 
 ## In progress / next
 
-1. Add alert routing integration (pipe `delivery_alert_triggered` into cron-event/user notification flow)
-2. Add deployment docs hardening (rollback + smoke-check playbook)
-3. Add dead-letter replay policy ops controls (allowlist/role-based approval strategy)
+1. Add deployment docs hardening (rollback + smoke-check playbook)
+2. Add dead-letter replay policy ops controls (allowlist/role-based approval strategy)
+3. Add alert routing policy controls (destination strategy + escalation channels)
 
 ---
 
@@ -235,6 +242,7 @@ npm run test:replay-bulk
 npm run test:replay-safety
 npm run test:quality
 npm run test:alerts
+npm run test:alert-routing
 npm run test:inline-retry
 npm run test:deploy
 npm run test:e2e

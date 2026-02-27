@@ -11,6 +11,7 @@ const KBIMonitor = require('./kbi-monitor');
 const InterventionEngine = require('./intervention-engine');
 const SchedulerRunner = require('./scheduler-runner');
 const DataCollector = require('./data-collector');
+const AlertRouter = require('./alert-router');
 const {
   isUuid,
   createRateLimiter,
@@ -33,6 +34,10 @@ async function createServer() {
   const scheduler = new SchedulerRunner(db);
   const cronDeliveryMode = scheduler?.delivery?.mode || 'none';
   const dataCollector = new DataCollector();
+  const alertRouter = new AlertRouter({
+    db,
+    delivery: scheduler?.delivery
+  });
 
   app.use(helmet());
   app.use(cors());
@@ -399,7 +404,15 @@ async function createServer() {
         return res.status(400).json(result);
       }
 
-      res.json(result);
+      let routed = null;
+      if (result.ok && result.should_notify) {
+        routed = await alertRouter.routeDeliveryAlert(result);
+      }
+
+      res.json({
+        ...result,
+        routed
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
