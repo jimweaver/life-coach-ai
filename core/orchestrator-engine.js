@@ -431,6 +431,13 @@ class OrchestratorEngine {
     };
   }
 
+  /**
+   * Get model adapter metrics
+   */
+  getModelMetrics() {
+    return this.domainAgents.getModelMetrics();
+  }
+
   async close() {
     await this.db.close();
   }

@@ -13,6 +13,129 @@ class ModelAdapter {
     this.retryJitterMs = Number(options.retryJitterMs ?? process.env.DOMAIN_MODEL_RETRY_JITTER_MS ?? 50);
 
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+
+    // Latency and performance tracking
+    this.callStats = {
+      total: 0,
+      successful: 0,
+      failed: 0,
+      totalDurationMs: 0,
+      byModel: {},
+      byDomain: {},
+      errorReasons: {},
+      retryCounts: { 0: 0, 1: 0, 2: 0, '3plus': 0 },
+      slowCalls: [] // Calls > 5000ms
+    };
+  }
+
+  /**
+   * Record call statistics
+   */
+  recordCall(model, domain, durationMs, success, retries, errorReason = null) {
+    this.callStats.total++;
+    this.callStats.totalDurationMs += durationMs;
+
+    if (success) {
+      this.callStats.successful++;
+    } else {
+      this.callStats.failed++;
+      if (errorReason) {
+        this.callStats.errorReasons[errorReason] = (this.callStats.errorReasons[errorReason] || 0) + 1;
+      }
+    }
+
+    // Track by model
+    if (!this.callStats.byModel[model]) {
+      this.callStats.byModel[model] = { total: 0, successful: 0, failed: 0, totalMs: 0 };
+    }
+    this.callStats.byModel[model].total++;
+    this.callStats.byModel[model].totalMs += durationMs;
+    if (success) {
+      this.callStats.byModel[model].successful++;
+    } else {
+      this.callStats.byModel[model].failed++;
+    }
+
+    // Track by domain
+    if (!this.callStats.byDomain[domain]) {
+      this.callStats.byDomain[domain] = { total: 0, successful: 0, failed: 0, totalMs: 0 };
+    }
+    this.callStats.byDomain[domain].total++;
+    this.callStats.byDomain[domain].totalMs += durationMs;
+    if (success) {
+      this.callStats.byDomain[domain].successful++;
+    } else {
+      this.callStats.byDomain[domain].failed++;
+    }
+
+    // Track retry counts
+    if (retries === 0) this.callStats.retryCounts[0]++;
+    else if (retries === 1) this.callStats.retryCounts[1]++;
+    else if (retries === 2) this.callStats.retryCounts[2]++;
+    else this.callStats.retryCounts['3plus']++;
+
+    // Track slow calls (>5000ms)
+    if (durationMs > 5000) {
+      this.callStats.slowCalls.push({
+        model,
+        domain,
+        durationMs,
+        timestamp: new Date().toISOString()
+      });
+      // Keep only last 50
+      if (this.callStats.slowCalls.length > 50) {
+        this.callStats.slowCalls.shift();
+      }
+    }
+  }
+
+  /**
+   * Get model call metrics
+   */
+  getMetrics() {
+    const avgDuration = this.callStats.total > 0
+      ? Math.round(this.callStats.totalDurationMs / this.callStats.total)
+      : 0;
+
+    return {
+      total_calls: this.callStats.total,
+      successful: this.callStats.successful,
+      failed: this.callStats.failed,
+      success_rate: this.callStats.total > 0
+        ? ((this.callStats.successful / this.callStats.total) * 100).toFixed(2) + '%'
+        : '0%',
+      avg_duration_ms: avgDuration,
+      by_model: Object.entries(this.callStats.byModel).map(([model, stats]) => ({
+        model,
+        total: stats.total,
+        successful: stats.successful,
+        failed: stats.failed,
+        success_rate: stats.total > 0
+          ? ((stats.successful / stats.total) * 100).toFixed(2) + '%'
+          : '0%',
+        avg_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : 0
+      })).sort((a, b) => b.total - a.total),
+      by_domain: Object.entries(this.callStats.byDomain).map(([domain, stats]) => ({
+        domain,
+        total: stats.total,
+        successful: stats.successful,
+        failed: stats.failed,
+        success_rate: stats.total > 0
+          ? ((stats.successful / stats.total) * 100).toFixed(2) + '%'
+          : '0%',
+        avg_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : 0
+      })).sort((a, b) => b.total - a.total),
+      retry_distribution: this.callStats.retryCounts,
+      error_reasons: Object.entries(this.callStats.errorReasons)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10),
+      slow_calls: {
+        count: this.callStats.slowCalls.length,
+        recent: this.callStats.slowCalls.slice(-5)
+      },
+      generated_at: new Date().toISOString()
+    };
   }
 
   shouldAttempt() {
@@ -298,15 +421,20 @@ class ModelAdapter {
 
     const maxAttempts = Math.max(1, this.retryMax + 1);
     let lastError = null;
+    const startTime = Date.now();
+    let retries = 0;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         const raw = await this.callOpenAiCompatible({ model, messages });
         const content = this.extractMessageContent(raw);
         const parsed = this.parseJsonContent(content);
+        const duration = Date.now() - startTime;
+        this.recordCall(model, domain, duration, true, retries);
         return this.normalizeResult({ parsed, domain, agentId, model, attemptCount: attempt });
       } catch (error) {
         lastError = error;
+        retries = attempt - 1;
         const retryable = this.isRetryableError(error);
         const canRetry = retryable && attempt < maxAttempts;
 
@@ -316,6 +444,11 @@ class ModelAdapter {
         await this.sleep(delayMs);
       }
     }
+
+    // Record failure
+    const duration = Date.now() - startTime;
+    const errorReason = lastError?.code || lastError?.message || 'unknown';
+    this.recordCall(model, domain, duration, false, retries, errorReason);
 
     if (this.mode === 'force') {
       throw lastError || new Error('model adapter failed without explicit error');

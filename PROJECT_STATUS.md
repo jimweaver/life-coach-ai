@@ -755,13 +755,26 @@ Updated: 2026-02-27
    - Added npm script: `test:delivery-metrics`
    - Graceful shutdown test passes
 
+80. **Model call latency tracking**
+   - Added call statistics tracking to `ModelAdapter` class
+   - Tracks: total calls, successful, failed, by model, by domain
+   - Tracks retry distribution (0, 1, 2, 3+ retries)
+   - Tracks error reasons with frequency count
+   - Tracks slow calls (>5000ms) with recent list
+   - Added `getModelMetrics()` method to `DomainAgents` and `OrchestratorEngine`
+   - Added `GET /metrics/model` endpoint
+   - Returns: success_rate, avg_duration_ms, by_model, by_domain, retry_distribution
+   - Integrated model stats into `/metrics/dashboard` endpoint
+   - Added test: `test-model-metrics.js`
+   - Added npm script: `test:model-metrics`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add model call latency tracking
-2. Add memory usage metrics
-3. Add agent execution time tracking
+1. Add memory usage metrics
+2. Add agent execution time tracking
 
 ---
 

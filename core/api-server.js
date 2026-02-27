@@ -1559,6 +1559,23 @@ async function createServer() {
     }
   });
 
+  // Model call latency metrics endpoint
+  app.get('/metrics/model', (_req, res) => {
+    try {
+      const metrics = engine.getModelMetrics();
+      res.json({
+        ok: true,
+        ...metrics
+      });
+    } catch (err) {
+      console.error('[Model Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   // Database query performance metrics endpoint
   app.get('/metrics/queries', (_req, res) => {
     try {
@@ -1602,6 +1619,9 @@ async function createServer() {
       // Get delivery metrics
       const deliveryMetrics = cronDelivery.getDeliveryMetrics();
 
+      // Get model metrics
+      const modelMetrics = engine.getModelMetrics();
+
       res.json({
         ok: true,
         summary: {
@@ -1626,6 +1646,12 @@ async function createServer() {
             total_deliveries: deliveryMetrics.total_deliveries,
             success_rate: deliveryMetrics.success_rate,
             avg_response_ms: deliveryMetrics.response_time_ms.avg
+          },
+          model_stats: {
+            total_calls: modelMetrics.total_calls,
+            success_rate: modelMetrics.success_rate,
+            avg_duration_ms: modelMetrics.avg_duration_ms,
+            slow_calls: modelMetrics.slow_calls.count
           }
         },
         services: {
@@ -1634,6 +1660,7 @@ async function createServer() {
           queries: queryMetrics,
           cache: cacheMetrics,
           delivery: deliveryMetrics,
+          model: modelMetrics,
           latency: {
             histogram: latencyHistogram,
             total_requests: totalRequests

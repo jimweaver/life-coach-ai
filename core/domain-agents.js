@@ -189,6 +189,13 @@ class DomainAgents {
     const heuristicOutput = heuristics[domain]();
     return this.maybeEnhanceWithModel(domain, input, context, heuristicOutput);
   }
+
+  /**
+   * Get model adapter metrics
+   */
+  getModelMetrics() {
+    return this.modelAdapter.getMetrics();
+  }
 }
 
 module.exports = DomainAgents;
