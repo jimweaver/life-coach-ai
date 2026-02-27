@@ -58,7 +58,9 @@ async function run() {
     mode: 'force',
     apiKey: 'test-key',
     baseUrl: 'https://mock.api/v1',
-    fetchImpl: mockFetch
+    fetchImpl: mockFetch,
+    retryBaseDelayMs: 1,
+    retryJitterMs: 0
   });
 
   const out = await adapter.generateDomainOutput({
@@ -81,6 +83,98 @@ async function run() {
   assert(out.domain === 'career', 'domain mismatch');
   assert(Array.isArray(out.recommendations) && out.recommendations.length >= 3, 'recommendations invalid');
   assert(out.metadata?.generation_mode === 'model-adapter', 'generation_mode should be model-adapter');
+  assert(out.metadata?.adapter_attempts === 1, 'adapter_attempts should be 1');
+
+  // 3) Retry/backoff behavior: first call fails with 503, second succeeds
+  let retryFetchCount = 0;
+  const retryFetch = async () => {
+    retryFetchCount += 1;
+    if (retryFetchCount === 1) {
+      return {
+        ok: false,
+        status: 503,
+        text: async () => 'service unavailable'
+      };
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                summary: '先穩定節奏，再逐步推進。',
+                recommendations: ['整理優先級清單', '設定 30/60/90 日節點', '每週回顧一次進度'],
+                constraints: ['避免一次過改太多'],
+                confidence: 0.77
+              })
+            }
+          }
+        ]
+      })
+    };
+  };
+
+  const retryAdapter = new ModelAdapter({
+    mode: 'force',
+    apiKey: 'test-key',
+    fetchImpl: retryFetch,
+    retryMax: 2,
+    retryBaseDelayMs: 1,
+    retryJitterMs: 0
+  });
+
+  const retryOut = await retryAdapter.generateDomainOutput({
+    domain: 'health',
+    input: '最近睡眠好差',
+    context: {},
+    agentConfig: { model: 'kimi-coding/k2p5' },
+    agentId: 'health-coach'
+  });
+
+  assert(retryFetchCount === 2, `expected retry count 2, got ${retryFetchCount}`);
+  assert(retryOut.metadata?.adapter_attempts === 2, 'expected success on second attempt');
+
+  // 4) Strict schema validation should throw in force mode
+  const badSchemaAdapter = new ModelAdapter({
+    mode: 'force',
+    apiKey: 'test-key',
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                summary: '太短',
+                recommendations: ['only one'],
+                confidence: 2
+              })
+            }
+          }
+        ]
+      })
+    }),
+    retryMax: 0,
+    retryBaseDelayMs: 1,
+    retryJitterMs: 0
+  });
+
+  let schemaFailed = false;
+  try {
+    await badSchemaAdapter.generateDomainOutput({
+      domain: 'finance',
+      input: '想改善預算',
+      context: {},
+      agentConfig: { model: 'kimi-coding/k2p5' },
+      agentId: 'finance-coach'
+    });
+  } catch (err) {
+    schemaFailed = String(err.message).includes('schema validation failed');
+  }
+
+  assert(schemaFailed, 'expected schema validation failure in force mode');
 
   console.log('✅ model adapter test passed');
 }

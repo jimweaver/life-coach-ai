@@ -7,6 +7,11 @@ class ModelAdapter {
     this.defaultModel = options.defaultModel ?? process.env.DOMAIN_MODEL_NAME ?? 'gpt-4o-mini';
     this.timeoutMs = Number(options.timeoutMs ?? process.env.DOMAIN_MODEL_TIMEOUT_MS ?? 12000);
     this.maxContextMessages = Number(options.maxContextMessages ?? process.env.DOMAIN_MODEL_MAX_CONTEXT_MESSAGES ?? 4);
+
+    this.retryMax = Number(options.retryMax ?? process.env.DOMAIN_MODEL_RETRY_MAX ?? 2);
+    this.retryBaseDelayMs = Number(options.retryBaseDelayMs ?? process.env.DOMAIN_MODEL_RETRY_BASE_DELAY_MS ?? 300);
+    this.retryJitterMs = Number(options.retryJitterMs ?? process.env.DOMAIN_MODEL_RETRY_JITTER_MS ?? 50);
+
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
   }
 
@@ -103,7 +108,17 @@ class ModelAdapter {
       });
 
       if (!response.ok) {
-        throw new Error(`model adapter HTTP ${response.status}`);
+        let responseBody = '';
+        try {
+          responseBody = await response.text();
+        } catch (_ignored) {
+          responseBody = '';
+        }
+
+        const error = new Error(`model adapter HTTP ${response.status}`);
+        error.httpStatus = response.status;
+        error.responseBody = String(responseBody || '').slice(0, 400);
+        throw error;
       }
 
       return response.json();
@@ -118,7 +133,9 @@ class ModelAdapter {
 
   parseJsonContent(content) {
     if (!content || typeof content !== 'string') {
-      throw new Error('empty model content');
+      const error = new Error('empty model content');
+      error.code = 'MODEL_EMPTY_CONTENT';
+      throw error;
     }
 
     const direct = content.trim();
@@ -138,21 +155,72 @@ class ModelAdapter {
       return JSON.parse(jsonLike[0]);
     }
 
-    throw new Error('no parseable json found');
+    const error = new Error('no parseable json found');
+    error.code = 'MODEL_JSON_PARSE_ERROR';
+    throw error;
   }
 
-  normalizeResult({ parsed, domain, agentId, model }) {
-    const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
-    const recommendations = Array.isArray(parsed.recommendations)
-      ? parsed.recommendations
-        .filter((x) => typeof x === 'string' && x.trim().length > 0)
-        .map((x) => x.trim())
-        .slice(0, 5)
-      : [];
+  validateParsedOutput(parsed) {
+    const errors = [];
 
-    if (!summary || recommendations.length < 3) {
-      throw new Error('model output missing required summary/recommendations');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      errors.push('payload must be an object');
     }
+
+    const summary = typeof parsed?.summary === 'string' ? parsed.summary.trim() : '';
+    if (!summary) {
+      errors.push('summary is required');
+    }
+
+    if (summary.length > 600) {
+      errors.push('summary too long (>600 chars)');
+    }
+
+    const recommendations = Array.isArray(parsed?.recommendations) ? parsed.recommendations : [];
+    if (recommendations.length < 3) {
+      errors.push('recommendations must have at least 3 items');
+    }
+
+    recommendations.forEach((item, idx) => {
+      if (typeof item !== 'string' || item.trim().length < 3) {
+        errors.push(`recommendations[${idx}] must be non-empty string`);
+      }
+    });
+
+    if (parsed?.constraints !== undefined && !Array.isArray(parsed.constraints)) {
+      errors.push('constraints must be an array when provided');
+    }
+
+    if (Array.isArray(parsed?.constraints)) {
+      parsed.constraints.forEach((item, idx) => {
+        if (typeof item !== 'string') {
+          errors.push(`constraints[${idx}] must be string`);
+        }
+      });
+    }
+
+    if (parsed?.confidence !== undefined) {
+      const c = Number(parsed.confidence);
+      if (!Number.isFinite(c) || c < 0 || c > 1) {
+        errors.push('confidence must be between 0 and 1');
+      }
+    }
+
+    if (errors.length) {
+      const error = new Error(`schema validation failed: ${errors.join('; ')}`);
+      error.code = 'MODEL_SCHEMA_VALIDATION_FAILED';
+      throw error;
+    }
+  }
+
+  normalizeResult({ parsed, domain, agentId, model, attemptCount }) {
+    this.validateParsedOutput(parsed);
+
+    const summary = parsed.summary.trim();
+    const recommendations = parsed.recommendations
+      .filter((x) => typeof x === 'string' && x.trim().length > 0)
+      .map((x) => x.trim())
+      .slice(0, 5);
 
     const constraints = Array.isArray(parsed.constraints)
       ? parsed.constraints.filter((x) => typeof x === 'string').slice(0, 4)
@@ -174,9 +242,43 @@ class ModelAdapter {
         generation_mode: 'model-adapter',
         adapter_provider: this.provider,
         adapter_model: model,
+        adapter_attempts: attemptCount,
         reasoning_brief: typeof parsed.reasoning_brief === 'string' ? parsed.reasoning_brief : null
       }
     };
+  }
+
+  isRetryableError(error) {
+    if (!error) return false;
+
+    const status = Number(error.httpStatus || error.status || 0);
+    if (status === 408 || status === 429 || status >= 500) return true;
+
+    const code = String(error.code || '').toUpperCase();
+    if (code === 'MODEL_JSON_PARSE_ERROR' || code === 'MODEL_SCHEMA_VALIDATION_FAILED' || code === 'MODEL_EMPTY_CONTENT') {
+      return true;
+    }
+
+    const msg = String(error.message || '').toLowerCase();
+    return (
+      msg.includes('timeout') ||
+      msg.includes('aborted') ||
+      msg.includes('fetch') ||
+      msg.includes('network') ||
+      msg.includes('http 408') ||
+      msg.includes('http 429') ||
+      msg.includes('http 5')
+    );
+  }
+
+  computeRetryDelayMs(attempt) {
+    const exp = this.retryBaseDelayMs * Math.pow(2, Math.max(0, attempt - 1));
+    const jitter = Math.floor(Math.random() * Math.max(0, this.retryJitterMs));
+    return exp + jitter;
+  }
+
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async generateDomainOutput({ domain, input, context, agentConfig = {}, agentId }) {
@@ -194,15 +296,32 @@ class ModelAdapter {
       }
     ];
 
-    try {
-      const raw = await this.callOpenAiCompatible({ model, messages });
-      const content = this.extractMessageContent(raw);
-      const parsed = this.parseJsonContent(content);
-      return this.normalizeResult({ parsed, domain, agentId, model });
-    } catch (error) {
-      if (this.mode === 'force') throw error;
-      return null;
+    const maxAttempts = Math.max(1, this.retryMax + 1);
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const raw = await this.callOpenAiCompatible({ model, messages });
+        const content = this.extractMessageContent(raw);
+        const parsed = this.parseJsonContent(content);
+        return this.normalizeResult({ parsed, domain, agentId, model, attemptCount: attempt });
+      } catch (error) {
+        lastError = error;
+        const retryable = this.isRetryableError(error);
+        const canRetry = retryable && attempt < maxAttempts;
+
+        if (!canRetry) break;
+
+        const delayMs = this.computeRetryDelayMs(attempt);
+        await this.sleep(delayMs);
+      }
     }
+
+    if (this.mode === 'force') {
+      throw lastError || new Error('model adapter failed without explicit error');
+    }
+
+    return null;
   }
 }
 

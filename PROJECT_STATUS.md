@@ -80,25 +80,24 @@ Updated: 2026-02-27
    - `/health` now exposes `rate_limit_backend`
    - Guardrails integration test now validates Redis-backed path
 
-11. **Model-calling adapter baseline integrated**
+11. **Model-calling adapter integrated (with reliability hardening)**
    - Added `core/model-adapter.js` (OpenAI-compatible, env-driven)
    - `core/domain-agents.js` now attempts model generation first, with heuristic fallback
    - Supports `DOMAIN_MODEL_ADAPTER_MODE=off|auto|force`
-   - Added adapter unit test: `test-model-adapter.js`
+   - Added strict schema validation for model JSON payload
+   - Added retry/backoff (`DOMAIN_MODEL_RETRY_MAX`, `DOMAIN_MODEL_RETRY_BASE_DELAY_MS`)
+   - Added adapter unit test coverage for skip/success/retry/schema-fail
 
 ---
 
 ## In progress / next
 
-1. Tune model-adapter quality controls:
-   - strict JSON schema enforcement
-   - retry/backoff and graceful degrade behavior
-2. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
-3. Extend production guardrails:
+1. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
+2. Extend production guardrails:
    - audit log normalization
    - endpoint-level policy tuning (per-route thresholds)
-4. Add external-source quality checks (freshness + duplicate suppression) for data collector
-5. Prepare deployment profile (OpenClaw-hosted + local DB)
+3. Add external-source quality checks (freshness + duplicate suppression) for data collector
+4. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---
 

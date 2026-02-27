@@ -50,7 +50,9 @@ class DomainAgents {
         ...heuristicOutput,
         metadata: {
           ...(heuristicOutput.metadata || {}),
-          generation_mode: 'heuristic'
+          generation_mode: 'heuristic',
+          fallback_used: true,
+          adapter_mode: this.modelAdapter.mode
         }
       };
     }
