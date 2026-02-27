@@ -28,6 +28,7 @@ const DeployTrendTelemetrySuppressionAlertDetector = require('./deploy-trend-tel
 const DeployTrendTelemetrySuppressionAlertSuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert-suppression-alert');
 const DeployEventSink = require('../scripts/deploy-event-sink');
 const PrometheusExporter = require('./prometheus-exporter');
+const MetricsAlertEvaluator = require('./metrics-alert-evaluator');
 const {
   isUuid,
   createRateLimiter,
@@ -66,6 +67,9 @@ async function createServer() {
     prefix: process.env.PROMETHEUS_METRICS_PREFIX || 'lifecoach',
     helpText: process.env.PROMETHEUS_HELP_TEXT !== 'false'
   });
+
+  // Metrics alert evaluator
+  const metricsAlertEvaluator = new MetricsAlertEvaluator();
 
   const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
   const canaryDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
@@ -1666,6 +1670,48 @@ async function createServer() {
       });
     } catch (err) {
       console.error('[Query Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
+  // Metrics alert evaluation endpoint
+  app.get('/metrics/alerts', async (_req, res) => {
+    try {
+      const [
+        orchestratorMetrics,
+        cacheMetrics
+      ] = await Promise.all([
+        Promise.resolve().then(() => engine.getMetrics()),
+        Promise.resolve().then(() => db.getCacheMetrics())
+      ]);
+
+      const deliveryMetrics = cronDelivery.getDeliveryMetrics();
+      const modelMetrics = engine.getModelMetrics();
+      const memUsage = process.memoryUsage();
+      const memoryMetrics = {
+        heap_utilization_percent: memUsage.heapTotal > 0
+          ? Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100 * 100) / 100
+          : 0
+      };
+
+      const alertResult = metricsAlertEvaluator.evaluateAll({
+        orchestrator: orchestratorMetrics,
+        memory: memoryMetrics,
+        cache: cacheMetrics,
+        delivery: deliveryMetrics,
+        model: modelMetrics
+      });
+
+      res.json({
+        ok: true,
+        ...alertResult,
+        thresholds: metricsAlertEvaluator.getConfig()
+      });
+    } catch (err) {
+      console.error('[Metrics Alerts] Error:', err);
       res.status(500).json({
         ok: false,
         error: err.message

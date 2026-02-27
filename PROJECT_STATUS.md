@@ -822,13 +822,30 @@ Updated: 2026-02-27
    - Documents metric reference and troubleshooting
    - All dashboards use Prometheus data source
 
+86. **Metrics alerting thresholds configuration**
+   - Created `MetricsAlertEvaluator` class in `core/metrics-alert-evaluator.js`
+   - Configurable thresholds via environment variables:
+     - Latency (warn/critical ms)
+     - Error rate (warn/critical %)
+     - Memory utilization (warn/critical %)
+     - Cache hit rate (warn/critical %)
+     - Delivery success rate (warn/critical %)
+     - Model success rate (warn/critical %)
+   - Supports cooldown between alerts (configurable minutes)
+   - Minimum sample size protection to avoid false positives
+   - Added `GET /metrics/alerts` endpoint
+   - Returns: active alerts, alert count, critical flag, threshold config
+   - Added test: `test-metrics-alerts.js`
+   - Added npm script: `test:metrics-alerts`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add metrics alerting thresholds configuration
-2. Create alerting rules for Prometheus
-3. Performance optimization review
+1. Create alerting rules for Prometheus Alertmanager
+2. Performance optimization review
+3. Load testing and capacity planning
 
 ---
 

@@ -82,6 +82,7 @@
     "test:memory-metrics": "node test-memory-metrics.js",
     "test:agent-execution": "node test-agent-execution-metrics.js",
     "test:prometheus": "node test-prometheus-metrics.js",
+    "test:metrics-alerts": "node test-metrics-alerts.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",
     "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",
