@@ -117,13 +117,19 @@ Updated: 2026-02-27
    - Snapshot quality block now reports filter metrics (`stale_removed`, `dedupe_removed`, etc.)
    - Extended test coverage in `test-data-collector.js`
 
+16. **Scheduler delivery observability endpoint added**
+   - Added `GET /jobs/delivery/metrics` (window + sample limit support)
+   - Exposes queue depth (redis mode), delivery log metrics, and outbound status summary
+   - Added DB observability helpers: `getSchedulerDeliveryMetrics`, `getOutboundEventStats`
+   - Added test: `test-delivery-metrics.js`
+
 ---
 
 ## In progress / next
 
-1. Add scheduler delivery observability dashboard/query endpoint (queue depth + failure rate)
-2. Add delivery retry/backoff + dead-letter handling for cron-event transport
-3. Add data-collector quality telemetry endpoint/reporting (surface quality block via API)
+1. Add delivery retry/backoff + dead-letter handling for cron-event transport
+2. Add data-collector quality telemetry endpoint/reporting (surface quality block via API)
+3. Wire outbox table into scheduler delivery flow for durable dispatch tracking
 4. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---
@@ -147,6 +153,7 @@ npm run test:policy
 npm run test:data
 npm run test:adapter
 npm run test:audit
+npm run test:metrics
 npm run test:delivery
 npm run test:scheduler-delivery
 npm run test:e2e

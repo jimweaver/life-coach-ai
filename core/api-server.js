@@ -279,6 +279,46 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/delivery/metrics', async (req, res) => {
+    try {
+      const windowMinutes = Number(req.query.windowMinutes || 60);
+      const limit = Number(req.query.limit || 500);
+
+      if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 10080) {
+        return badRequest(res, ['windowMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
+        return badRequest(res, ['limit must be an integer between 1 and 5000']);
+      }
+
+      const [logMetrics, outboxStats] = await Promise.all([
+        db.getSchedulerDeliveryMetrics({ windowMinutes, limit }),
+        db.getOutboundEventStats(windowMinutes)
+      ]);
+
+      const queueKey = scheduler?.delivery?.redisListKey || process.env.CRON_EVENT_REDIS_LIST_KEY || 'lifecoach:cron-events';
+      let queueDepth = null;
+
+      if (scheduler?.delivery?.mode === 'redis' && db.redis) {
+        queueDepth = await db.redis.llen(queueKey);
+      }
+
+      res.json({
+        ok: true,
+        delivery_mode: scheduler?.delivery?.mode || 'none',
+        queue: {
+          key: queueKey,
+          depth: queueDepth
+        },
+        log_metrics: logMetrics,
+        outbox: outboxStats
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/jobs/run-monitor-cycle', async (req, res) => {
     try {
       const limitUsers = Number(req.body?.limitUsers || 100);

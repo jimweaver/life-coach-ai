@@ -423,6 +423,114 @@ class DatabaseStorageManager {
     );
   }
 
+  async getOutboundEventStats(windowMinutes = 60) {
+    await this.ensureOutboxTable();
+
+    const [totalRows, recentRows] = await Promise.all([
+      this.postgres.query(
+        `SELECT status, COUNT(*)::int AS count
+         FROM outbound_events
+         GROUP BY status`
+      ),
+      this.postgres.query(
+        `SELECT status, COUNT(*)::int AS count
+         FROM outbound_events
+         WHERE created_at >= NOW() - ($1 * INTERVAL '1 minute')
+         GROUP BY status`,
+        [windowMinutes]
+      )
+    ]);
+
+    const byStatus = { pending: 0, dispatched: 0, failed: 0 };
+    const recentByStatus = { pending: 0, dispatched: 0, failed: 0 };
+
+    for (const row of totalRows.rows) {
+      byStatus[row.status] = Number(row.count);
+    }
+
+    for (const row of recentRows.rows) {
+      recentByStatus[row.status] = Number(row.count);
+    }
+
+    const recentTotal = recentByStatus.pending + recentByStatus.dispatched + recentByStatus.failed;
+
+    return {
+      total: byStatus,
+      recent: {
+        window_minutes: windowMinutes,
+        ...recentByStatus,
+        total: recentTotal,
+        failure_rate: recentTotal > 0
+          ? Number((recentByStatus.failed / recentTotal).toFixed(4))
+          : 0
+      }
+    };
+  }
+
+  async getSchedulerDeliveryMetrics({ windowMinutes = 60, limit = 500 } = {}) {
+    const result = await this.postgres.query(
+      `SELECT action, status, timestamp, metadata
+       FROM agent_logs
+       WHERE action IN ('scheduled_monitor_cycle', 'scheduled_morning_checkin')
+         AND timestamp >= NOW() - ($1 * INTERVAL '1 minute')
+       ORDER BY timestamp DESC
+       LIMIT $2`,
+      [windowMinutes, limit]
+    );
+
+    const metrics = {
+      window_minutes: windowMinutes,
+      sample_size: result.rows.length,
+      monitor_cycles: 0,
+      morning_cycles: 0,
+      attempted_deliveries: 0,
+      delivered: 0,
+      failed: 0,
+      skipped: 0,
+      last_delivery_at: null,
+      last_failure_at: null,
+      failure_rate: 0
+    };
+
+    for (const row of result.rows) {
+      if (row.action === 'scheduled_monitor_cycle') metrics.monitor_cycles += 1;
+      if (row.action === 'scheduled_morning_checkin') metrics.morning_cycles += 1;
+
+      const delivery = row.metadata?.delivery;
+      const mode = delivery?.mode || null;
+
+      if (!delivery) {
+        metrics.skipped += 1;
+        continue;
+      }
+
+      if (mode === 'none' || delivery.reason === 'delivery disabled') {
+        metrics.skipped += 1;
+        continue;
+      }
+
+      metrics.attempted_deliveries += 1;
+
+      if (delivery.delivered) {
+        metrics.delivered += 1;
+        if (!metrics.last_delivery_at || row.timestamp > metrics.last_delivery_at) {
+          metrics.last_delivery_at = row.timestamp;
+        }
+      } else {
+        metrics.failed += 1;
+        if (!metrics.last_failure_at || row.timestamp > metrics.last_failure_at) {
+          metrics.last_failure_at = row.timestamp;
+        }
+      }
+    }
+
+    if (metrics.attempted_deliveries > 0) {
+      metrics.failure_rate = Number((metrics.failed / metrics.attempted_deliveries).toFixed(4));
+    }
+
+    return metrics;
+  }
+
   // ========== Scheduler Support ==========
 
   async listUserIds(limit = 100) {

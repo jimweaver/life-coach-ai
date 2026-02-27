@@ -17,6 +17,7 @@
     "test:adapter": "node test-model-adapter.js",
     "test:audit": "node test-audit-log.js",
     "test:policy": "node test-rate-limit-policy.js",
+    "test:metrics": "node test-delivery-metrics.js",
     "test:delivery": "node test-cron-delivery.js",
     "test:scheduler-delivery": "node test-scheduler-delivery.js",
     "start:api": "node core/api-server.js"
