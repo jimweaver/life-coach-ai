@@ -1,0 +1,54 @@
+{
+  "profile_id": "openclaw-hosted-localdb-v1",
+  "name": "OpenClaw Hosted + Local Redis/PostgreSQL",
+  "version": "1.0.0",
+  "description": "Production-style deployment profile for running Life Coach API inside OpenClaw with local Redis/PostgreSQL services.",
+  "runtime": {
+    "api_port": 8787,
+    "node_env": "production",
+    "health_endpoint": "/health"
+  },
+  "services": {
+    "redis": {
+      "required": true,
+      "host_env": "REDIS_HOST",
+      "port_env": "REDIS_PORT",
+      "default_host": "localhost",
+      "default_port": 6379
+    },
+    "postgres": {
+      "required": true,
+      "dsn_env": "DATABASE_URL",
+      "default_dsn": "postgresql://tj@localhost:5432/life_coach"
+    }
+  },
+  "env": {
+    "required": [
+      "DATABASE_URL"
+    ],
+    "recommended": [
+      "PORT",
+      "RATE_LIMIT_BACKEND",
+      "RATE_LIMIT_WINDOW_MS",
+      "RATE_LIMIT_MAX",
+      "RATE_LIMIT_MAX_CHAT",
+      "RATE_LIMIT_MAX_JOBS",
+      "RATE_LIMIT_MAX_INTERVENTION",
+      "RATE_LIMIT_MAX_GOALS",
+      "CRON_DELIVERY_MODE",
+      "CRON_EVENT_REDIS_LIST_KEY",
+      "SCHEDULER_INLINE_RETRY_MAX",
+      "CRON_DELIVERY_RETRY_MAX",
+      "DATA_COLLECTOR_MAX_SOURCE_AGE_DAYS",
+      "DATA_COLLECTOR_ENABLE_DEDUPE",
+      "DOMAIN_MODEL_ADAPTER_MODE"
+    ]
+  },
+  "operational_checks": [
+    "database_connectivity",
+    "redis_connectivity",
+    "api_health",
+    "scheduler_delivery_mode",
+    "rate_limit_policy"
+  ]
+}

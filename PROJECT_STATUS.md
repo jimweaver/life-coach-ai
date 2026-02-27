@@ -157,13 +157,20 @@ Updated: 2026-02-27
    - Delivery metadata now carries retry attempts from inline dispatch
    - Added test: `test-inline-dispatch-retry.js`
 
+22. **Deployment profile baseline prepared (OpenClaw-hosted + local DB)**
+   - Added deployment profile: `config/deployment/openclaw-local.profile.json`
+   - Added env template: `config/deployment/openclaw-local.env.example`
+   - Added readiness checker: `scripts/deployment-check.js`
+   - Added doc: `docs/DEPLOYMENT_PROFILE.md`
+   - Added npm command: `npm run deploy:check`
+
 ---
 
 ## In progress / next
 
-1. Prepare deployment profile (OpenClaw-hosted + local DB)
-2. Add dead-letter replay audit/requeue controls (bulk replay + replay filters)
-3. Add delivery retry alerting policy (escalate repeated dead-letter growth)
+1. Add dead-letter replay audit/requeue controls (bulk replay + replay filters)
+2. Add delivery retry alerting policy (escalate repeated dead-letter growth)
+3. Add deployment automation wrapper (preflight + start)
 
 ---
 
@@ -171,6 +178,7 @@ Updated: 2026-02-27
 
 ```bash
 # API
+npm run deploy:check
 npm run start:api
 
 # Tests
