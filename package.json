@@ -31,6 +31,7 @@
     "test:alert-routing": "node test-alert-routing.js",
     "test:alert-policy": "node test-alert-routing-policy.js",
     "test:alert-ownership": "node test-alert-ownership-sync.js",
+    "test:alert-drift": "node test-alert-ownership-drift.js",
     "test:inline-retry": "node test-inline-dispatch-retry.js",
     "test:deploy": "node test-deploy-wrapper.js",
     "test:deploy-observability": "node test-deploy-observability.js",

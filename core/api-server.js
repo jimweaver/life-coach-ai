@@ -12,6 +12,7 @@ const InterventionEngine = require('./intervention-engine');
 const SchedulerRunner = require('./scheduler-runner');
 const DataCollector = require('./data-collector');
 const AlertRouter = require('./alert-router');
+const AlertOwnershipDriftDetector = require('./alert-ownership-drift');
 const {
   isUuid,
   createRateLimiter,
@@ -38,6 +39,7 @@ async function createServer() {
     db,
     delivery: scheduler?.delivery
   });
+  const ownershipDriftDetector = new AlertOwnershipDriftDetector();
 
   app.use(helmet());
   app.use(cors());
@@ -284,7 +286,10 @@ async function createServer() {
         escalation_channel: process.env.DELIVERY_ALERT_ESCALATION_CHANNEL || (process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event'),
         oncall_sync_enabled: String(process.env.DELIVERY_ALERT_ONCALL_SYNC_ENABLED || 'false').toLowerCase() !== 'false',
         oncall_source_file_configured: !!process.env.DELIVERY_ALERT_ONCALL_FILE,
-        oncall_refresh_ms: Number(process.env.DELIVERY_ALERT_ONCALL_REFRESH_MS || 60000)
+        oncall_refresh_ms: Number(process.env.DELIVERY_ALERT_ONCALL_REFRESH_MS || 60000),
+        owner_drift_warn_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_WARN_STALE_MINUTES || 120),
+        owner_drift_critical_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_CRITICAL_STALE_MINUTES || 360),
+        owner_drift_strict: String(process.env.ALERT_OWNER_DRIFT_STRICT || 'false').toLowerCase() === 'true'
       },
       time: new Date().toISOString()
     });
@@ -562,6 +567,59 @@ async function createServer() {
             error: 'scheduler policy sync unavailable'
           }
         }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/delivery/ownership-drift', async (req, res) => {
+    try {
+      const forceSync = req.query.sync === undefined
+        ? true
+        : String(req.query.sync).toLowerCase() !== 'false';
+
+      const emitAudit = req.query.emitAudit === undefined
+        ? true
+        : String(req.query.emitAudit).toLowerCase() !== 'false';
+
+      if (!scheduler || typeof scheduler.getAlertRoutePolicy !== 'function') {
+        return res.status(400).json({
+          ok: false,
+          reason: 'ownership_drift_not_supported'
+        });
+      }
+
+      const policy = await scheduler.getAlertRoutePolicy({ forceSync });
+      const drift = ownershipDriftDetector.computeDrift(policy);
+
+      if (emitAudit && drift.drift_detected) {
+        try {
+          await db.logAgentAction(
+            'delivery-alert',
+            null,
+            null,
+            'ownership_drift_detected',
+            null,
+            'success',
+            null,
+            {
+              level: drift.level,
+              reasons: drift.reasons,
+              sync: drift.sync,
+              owners: drift.owners,
+              policy_snapshot: drift.policy_snapshot
+            }
+          );
+        } catch (_e) {
+          // best effort only
+        }
+      }
+
+      res.json({
+        ok: true,
+        drift,
+        policy
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

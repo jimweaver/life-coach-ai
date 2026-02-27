@@ -57,6 +57,22 @@ Roster example:
 Inspect effective policy and sync status:
 - `GET /jobs/delivery/route-policy?sync=true`
 
+### Ownership drift detection
+
+Use drift detector to catch stale/missing owner assignments:
+
+- Endpoint: `GET /jobs/delivery/ownership-drift?sync=true`
+- Drift tuning env:
+  - `ALERT_OWNER_DRIFT_WARN_STALE_MINUTES` (default: `120`)
+  - `ALERT_OWNER_DRIFT_CRITICAL_STALE_MINUTES` (default: `360`)
+  - `ALERT_OWNER_DRIFT_STRICT` (default: `false`)
+
+Drift will raise reasons such as:
+- `oncall_sync_stale`
+- `oncall_sync_error`
+- `missing_warn_owner`
+- `missing_critical_owner`
+
 ---
 
 ## 2) Ownership matrix
@@ -113,9 +129,11 @@ After policy changes:
 1. Check policy endpoint:
    - `GET /jobs/delivery/route-policy`
    - `GET /jobs/delivery/route-policy?sync=true` (if on-call sync enabled)
+   - `GET /jobs/delivery/ownership-drift?sync=true` (drift gate)
 2. Trigger policy test suite:
    - `npm run test:alert-policy`
    - `npm run test:alert-ownership`
+   - `npm run test:alert-drift`
    - `npm run test:alerts`
 3. Validate health snapshot includes alert policy:
    - `GET /health` → `delivery_alert_policy`

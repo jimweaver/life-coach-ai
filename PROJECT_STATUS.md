@@ -311,13 +311,21 @@ Updated: 2026-02-27
    - Added coverage: `test-deploy-event-sink.js`
    - Wrapper now flushes sink writes before exit to reduce log loss risk
 
+39. **Alert ownership drift detection added (roster freshness + mismatch alerts)**
+   - Added drift detector: `core/alert-ownership-drift.js`
+   - New API endpoint: `GET /jobs/delivery/ownership-drift?sync=true`
+   - Drift signals include stale sync, sync errors, and missing warn/critical ownership
+   - `/health` now exposes owner drift tuning snapshot
+   - Added coverage: `test-alert-ownership-drift.js`
+   - Governance docs updated with drift gate + verification flow
+
 ---
 
 ## In progress / next
 
-1. Add alert ownership drift detection (roster freshness + mismatch alerts)
-2. Add canary profile drift alarms (auto-notify when baseline shifts beyond tolerance)
-3. Add deploy event analytics endpoint (query deploy_run_events by run/time/event)
+1. Add canary profile drift alarms (auto-notify when baseline shifts beyond tolerance)
+2. Add deploy event analytics endpoint (query deploy_run_events by run/time/event)
+3. Add ownership drift alert routing (auto-escalate when drift level is critical)
 
 ---
 
@@ -367,6 +375,7 @@ npm run test:alerts
 npm run test:alert-routing
 npm run test:alert-policy
 npm run test:alert-ownership
+npm run test:alert-drift
 npm run test:inline-retry
 npm run test:deploy
 npm run test:deploy-observability
