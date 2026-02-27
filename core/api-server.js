@@ -23,6 +23,7 @@ const {
   computeCanaryDriftTrend
 } = require('../scripts/canary-drift-trend');
 const DeployTrendAnomalyDetector = require('./deploy-trend-anomaly');
+const DeployTrendTelemetryAlertDetector = require('./deploy-trend-telemetry-alert');
 const {
   isUuid,
   createRateLimiter,
@@ -52,6 +53,7 @@ async function createServer() {
   const ownershipDriftDetector = new AlertOwnershipDriftDetector();
   const canaryDriftDetector = new CanaryDriftDetector();
   const deployTrendAnomalyDetector = new DeployTrendAnomalyDetector();
+  const deployTrendTelemetryAlertDetector = new DeployTrendTelemetryAlertDetector();
 
   const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
   const canaryDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
@@ -68,6 +70,14 @@ async function createServer() {
     suppressionDuplicateWindowMinutes: Number(process.env.DEPLOY_TREND_SUPPRESSION_DUPLICATE_WINDOW_MINUTES || 120),
     suppressionStateKey: process.env.DEPLOY_TREND_SUPPRESSION_STATE_KEY || 'lifecoach:deploy-trend:suppression',
     suppressionStateTtlSec: Number(process.env.DEPLOY_TREND_SUPPRESSION_STATE_TTL_SEC || 604800)
+  };
+
+  const deployTrendTelemetryAlertRoutingPolicy = {
+    routeEnabled: String(process.env.DEPLOY_TREND_TELEMETRY_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+    routeMinLevel: String(process.env.DEPLOY_TREND_TELEMETRY_ALERT_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
+    routeUserId: process.env.DEPLOY_TREND_TELEMETRY_ALERT_ROUTE_USER_ID || deployTrendRoutingPolicy.routeUserId || null,
+    routeChannel: process.env.DEPLOY_TREND_TELEMETRY_ALERT_ROUTE_CHANNEL || deployTrendRoutingPolicy.routeChannel || 'cron-event',
+    routeRetryMax: Number(process.env.DEPLOY_TREND_TELEMETRY_ALERT_ROUTE_RETRY_MAX || deployTrendRoutingPolicy.routeRetryMax || 1)
   };
 
   const ownershipDriftRoutingPolicy = {
@@ -763,6 +773,25 @@ async function createServer() {
         critical_volume_spike: deployTrendAnomalyDetector.criticalVolumeSpikeMultiplier,
         warn_duration_spike: deployTrendAnomalyDetector.warnDurationMultiplier,
         critical_duration_spike: deployTrendAnomalyDetector.criticalDurationMultiplier
+      },
+      deploy_trend_telemetry_alert_policy: {
+        route_enabled: deployTrendTelemetryAlertRoutingPolicy.routeEnabled,
+        route_min_level: deployTrendTelemetryAlertRoutingPolicy.routeMinLevel,
+        route_user_id_configured: !!deployTrendTelemetryAlertRoutingPolicy.routeUserId,
+        route_channel: deployTrendTelemetryAlertRoutingPolicy.routeChannel,
+        route_retry_max: deployTrendTelemetryAlertRoutingPolicy.routeRetryMax,
+        warn_route_failure_rate: deployTrendTelemetryAlertDetector.warnRouteFailureRate,
+        critical_route_failure_rate: deployTrendTelemetryAlertDetector.criticalRouteFailureRate,
+        warn_suppression_rate: deployTrendTelemetryAlertDetector.warnSuppressionRate,
+        critical_suppression_rate: deployTrendTelemetryAlertDetector.criticalSuppressionRate,
+        warn_route_failure_spike: deployTrendTelemetryAlertDetector.warnRouteFailureSpike,
+        critical_route_failure_spike: deployTrendTelemetryAlertDetector.criticalRouteFailureSpike,
+        warn_suppression_spike: deployTrendTelemetryAlertDetector.warnSuppressionSpike,
+        critical_suppression_spike: deployTrendTelemetryAlertDetector.criticalSuppressionSpike,
+        min_detections: deployTrendTelemetryAlertDetector.minDetections,
+        min_route_attempts: deployTrendTelemetryAlertDetector.minRouteAttempts,
+        min_buckets: deployTrendTelemetryAlertDetector.minBuckets,
+        baseline_buckets: deployTrendTelemetryAlertDetector.baselineBuckets
       },
       time: new Date().toISOString()
     });
@@ -1578,6 +1607,196 @@ async function createServer() {
           bucketLimit
         },
         trend
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/deploy-events/anomalies/telemetry/alerts', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 60);
+      const limit = Number(req.query.limit || 5000);
+      const bucketLimit = Number(req.query.bucketLimit || 500);
+
+      const emitAudit = req.query.emitAudit === undefined
+        ? true
+        : String(req.query.emitAudit).toLowerCase() !== 'false';
+
+      const routeEnabled = req.query.route === undefined
+        ? deployTrendTelemetryAlertRoutingPolicy.routeEnabled
+        : String(req.query.route).toLowerCase() !== 'false';
+
+      const routeMinLevel = String(req.query.routeMinLevel || deployTrendTelemetryAlertRoutingPolicy.routeMinLevel).toLowerCase();
+      if (!['info', 'warn', 'warning', 'critical'].includes(routeMinLevel)) {
+        return badRequest(res, ['routeMinLevel must be one of info|warn|warning|critical']);
+      }
+
+      const routeUserId = req.query.routeUserId
+        ? String(req.query.routeUserId).trim()
+        : deployTrendTelemetryAlertRoutingPolicy.routeUserId;
+
+      const routeChannel = req.query.routeChannel
+        ? String(req.query.routeChannel).trim()
+        : deployTrendTelemetryAlertRoutingPolicy.routeChannel;
+
+      if (routeUserId && !isUuid(routeUserId)) {
+        return badRequest(res, ['routeUserId must be a valid UUID']);
+      }
+
+      const routeRetryMax = req.query.routeRetryMax === undefined
+        ? deployTrendTelemetryAlertRoutingPolicy.routeRetryMax
+        : Number(req.query.routeRetryMax);
+
+      if (!Number.isInteger(routeRetryMax) || routeRetryMax < 0 || routeRetryMax > 10) {
+        return badRequest(res, ['routeRetryMax must be an integer between 0 and 10']);
+      }
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20000) {
+        return badRequest(res, ['limit must be an integer between 1 and 20000']);
+      }
+
+      if (!Number.isInteger(bucketLimit) || bucketLimit < 1 || bucketLimit > 5000) {
+        return badRequest(res, ['bucketLimit must be an integer between 1 and 5000']);
+      }
+
+      const trend = await db.getDeployTrendAnomalyTelemetryTrend({
+        sinceMinutes,
+        bucketMinutes,
+        runId,
+        source,
+        limit,
+        bucketLimit
+      });
+
+      const alert = deployTrendTelemetryAlertDetector.evaluate({ trend });
+
+      const routeCandidate = routeEnabled
+        && alert.should_notify
+        && (deployTrendLevelRank[alert.level] || 1) >= (deployTrendLevelRank[routeMinLevel] || 2);
+
+      let routed = null;
+      if (routeCandidate) {
+        const reasonsText = Array.isArray(alert.reasons) && alert.reasons.length
+          ? alert.reasons.join(', ')
+          : 'n/a';
+
+        const messageText = [
+          `[Deploy Trend Telemetry Alert][${alert.level}]`,
+          `reasons=${reasonsText}`,
+          `runId=${runId || 'all'}`,
+          `source=${source || 'all'}`,
+          `window=${sinceMinutes}m`,
+          `bucket=${bucketMinutes}m`
+        ].join(' ');
+
+        routed = await alertRouter.route({
+          kind: 'deploy_trend_telemetry_alert',
+          level: alert.level,
+          text: messageText,
+          metadata: {
+            filters: {
+              runId,
+              source,
+              sinceMinutes,
+              bucketMinutes,
+              limit,
+              bucketLimit
+            },
+            trend_summary: {
+              sample_size: trend.sample_size,
+              bucket_count: trend.bucket_count
+            },
+            alert
+          },
+          options: {
+            toUserId: routeUserId,
+            channel: routeChannel,
+            retryMax: routeRetryMax
+          }
+        });
+      }
+
+      if (emitAudit && alert.alert_detected) {
+        try {
+          await db.logAgentAction(
+            'deploy-trend',
+            null,
+            null,
+            'deploy_trend_telemetry_alert_detected',
+            null,
+            'success',
+            null,
+            {
+              filters: {
+                runId,
+                source,
+                sinceMinutes,
+                bucketMinutes,
+                limit,
+                bucketLimit
+              },
+              trend_summary: {
+                sample_size: trend.sample_size,
+                bucket_count: trend.bucket_count
+              },
+              alert,
+              route: {
+                enabled: routeEnabled,
+                min_level: routeMinLevel,
+                candidate: !!routeCandidate,
+                routed,
+                target_user_id: routeUserId || null,
+                target_channel: routeChannel,
+                route_retry_max: routeRetryMax
+              }
+            }
+          );
+        } catch (_e) {
+          // best effort only
+        }
+      }
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          limit,
+          bucketLimit
+        },
+        trend,
+        alert,
+        route: {
+          enabled: routeEnabled,
+          min_level: routeMinLevel,
+          candidate: !!routeCandidate,
+          target_user_id: routeUserId || null,
+          target_channel: routeChannel,
+          retry_max: routeRetryMax
+        },
+        routed
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

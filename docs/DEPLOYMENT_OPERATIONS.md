@@ -197,6 +197,10 @@ Deploy event analytics APIs:
 - `GET /jobs/deploy-events/anomalies/telemetry/trend`
   - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
   - returns time-bucketed telemetry rollups (suppression/route attempt/delivery trends)
+- `GET /jobs/deploy-events/anomalies/telemetry/alerts`
+  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+  - optional controls: `emitAudit`, `route`, `routeMinLevel`, `routeUserId`, `routeChannel`, `routeRetryMax`
+  - detects threshold breaches for route-failure saturation and suppression saturation/spikes
 
 Validation:
 
@@ -207,6 +211,7 @@ npm run test:deploy-trend
 npm run test:deploy-anomaly
 npm run test:deploy-telemetry
 npm run test:deploy-telemetry-trend
+npm run test:deploy-telemetry-alert
 ```
 
 ---

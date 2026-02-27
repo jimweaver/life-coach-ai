@@ -45,6 +45,7 @@
     "test:deploy-suppression": "node test-deploy-trend-suppression.js",
     "test:deploy-telemetry": "node test-deploy-trend-telemetry.js",
     "test:deploy-telemetry-trend": "node test-deploy-trend-telemetry-trend.js",
+    "test:deploy-telemetry-alert": "node test-deploy-trend-telemetry-alert.js",
     "test:deploy-trend": "node test-deploy-event-trend.js",
     "test:deploy-smoke": "node test-deploy-smoke-wrapper.js",
     "test:deploy-canary": "node test-deploy-canary-wrapper.js",

@@ -474,12 +474,24 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-telemetry-trend`
    - Deployment ops + readiness docs updated with trend telemetry endpoint/test gates
 
+55. **Deploy anomaly telemetry threshold alerts added (route-failure spikes + suppression saturation)**
+   - Added detector module: `core/deploy-trend-telemetry-alert.js`
+   - Added endpoint: `GET /jobs/deploy-events/anomalies/telemetry/alerts`
+   - Supports filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+   - Supports optional controls: `emitAudit`, `route`, `routeMinLevel`, `routeUserId`, `routeChannel`, `routeRetryMax`
+   - Detects saturation/spike signals on telemetry trend buckets (`route_failure_*`, `suppression_*`)
+   - Emits audit signal: `deploy_trend_telemetry_alert_detected`
+   - `/health` now exposes `deploy_trend_telemetry_alert_policy`
+   - Added coverage: `test-deploy-trend-telemetry-alert.js`
+   - Added npm script: `test:deploy-telemetry-alert`
+   - Deployment ops + readiness docs updated with telemetry alert endpoint/test gates
+
 ---
 
 ## In progress / next
 
 1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Extend deploy anomaly telemetry with threshold-based trend alerts (route failure spikes / suppression saturation)
+2. Add suppression/cooldown controls for deploy telemetry alert routing to prevent repeated paging
 3. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
@@ -542,6 +554,7 @@ npm run test:deploy-trend
 npm run test:deploy-anomaly
 npm run test:deploy-telemetry
 npm run test:deploy-telemetry-trend
+npm run test:deploy-telemetry-alert
 npm run test:deploy-suppression
 npm run test:deploy-dashboard
 npm run test:deploy-smoke
