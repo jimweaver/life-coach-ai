@@ -10,6 +10,7 @@ const DatabaseStorageManager = require('./storage/database-storage');
 const KBIMonitor = require('./kbi-monitor');
 const InterventionEngine = require('./intervention-engine');
 const SchedulerRunner = require('./scheduler-runner');
+const DataCollector = require('./data-collector');
 const {
   isUuid,
   createRateLimiter,
@@ -31,6 +32,7 @@ async function createServer() {
   const interventionEngine = new InterventionEngine();
   const scheduler = new SchedulerRunner(db);
   const cronDeliveryMode = scheduler?.delivery?.mode || 'none';
+  const dataCollector = new DataCollector();
 
   app.use(helmet());
   app.use(cors());
@@ -279,6 +281,52 @@ async function createServer() {
     }
   });
 
+  // ========== Data Quality Telemetry ==========
+
+  const VALID_DOMAINS = ['career', 'health', 'finance', 'skill', 'relationship', 'decision'];
+
+  app.get('/data-quality/probe', async (req, res) => {
+    try {
+      const domain = String(req.query.domain || '').toLowerCase();
+      const input = String(req.query.input || '').trim();
+
+      const errors = [];
+      if (!domain || !VALID_DOMAINS.includes(domain)) {
+        errors.push(`domain must be one of: ${VALID_DOMAINS.join(', ')}`);
+      }
+      if (!input || input.length < 2) {
+        errors.push('input query string is required (min 2 chars)');
+      }
+      if (input.length > 500) {
+        errors.push('input must be <= 500 characters');
+      }
+      if (errors.length) return badRequest(res, errors);
+
+      const snapshot = await dataCollector.getDomainSnapshot(domain, input);
+
+      res.json({
+        ok: true,
+        domain,
+        input,
+        snapshot
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/data-quality/domains', (_req, res) => {
+    res.json({
+      ok: true,
+      domains: VALID_DOMAINS,
+      config: {
+        max_source_age_days: dataCollector.maxSourceAgeDays,
+        dedupe_enabled: dataCollector.enableDedupe,
+        brave_configured: !!dataCollector.braveApiKey
+      }
+    });
+  });
+
   app.get('/jobs/delivery/metrics', async (req, res) => {
     try {
       const windowMinutes = Number(req.query.windowMinutes || 60);
@@ -327,6 +375,33 @@ async function createServer() {
       }
       const result = await scheduler.runMonitorCycle({ limitUsers });
       res.json({ ok: true, result });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/jobs/run-retry-cycle', async (req, res) => {
+    try {
+      const limit = Number(req.body?.limit || 50);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+        return badRequest(res, ['limit must be an integer between 1 and 500']);
+      }
+      const result = await scheduler.runRetryCycle({ limit });
+      res.json({ ok: true, result });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/dead-letter', async (req, res) => {
+    try {
+      const limit = Number(req.query.limit || 50);
+      const eventType = req.query.eventType || null;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+        return badRequest(res, ['limit must be an integer between 1 and 500']);
+      }
+      const events = await db.getDeadLetterEvents({ limit, eventType });
+      res.json({ ok: true, count: events.length, events });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

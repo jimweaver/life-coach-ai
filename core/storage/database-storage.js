@@ -334,12 +334,29 @@ class DatabaseStorageManager {
              channel VARCHAR(50) NOT NULL DEFAULT 'cron-event',
              event_type VARCHAR(80) NOT NULL,
              user_id UUID REFERENCES user_profiles(user_id) ON DELETE CASCADE,
-             status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'dispatched', 'failed')),
+             status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'dispatched', 'failed', 'dead_letter')),
              payload JSONB DEFAULT '{}',
              delivery_metadata JSONB DEFAULT '{}',
-             error_message TEXT
+             error_message TEXT,
+             retry_count INT NOT NULL DEFAULT 0,
+             max_retries INT NOT NULL DEFAULT 5,
+             next_retry_at TIMESTAMP WITH TIME ZONE
            )`
         );
+
+        // Migrate existing tables: add retry columns if missing (must run before retry index)
+        const cols = await this.postgres.query(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_name = 'outbound_events' AND column_name = 'retry_count'`
+        );
+        if (cols.rows.length === 0) {
+          await this.postgres.query(`ALTER TABLE outbound_events ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0`);
+          await this.postgres.query(`ALTER TABLE outbound_events ADD COLUMN IF NOT EXISTS max_retries INT NOT NULL DEFAULT 5`);
+          await this.postgres.query(`ALTER TABLE outbound_events ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP WITH TIME ZONE`);
+          // Relax status check to include dead_letter
+          await this.postgres.query(`ALTER TABLE outbound_events DROP CONSTRAINT IF EXISTS outbound_events_status_check`);
+          await this.postgres.query(`ALTER TABLE outbound_events ADD CONSTRAINT outbound_events_status_check CHECK (status IN ('pending', 'dispatched', 'failed', 'dead_letter'))`);
+        }
 
         await this.postgres.query(
           `CREATE INDEX IF NOT EXISTS idx_outbound_events_status_created
@@ -349,6 +366,12 @@ class DatabaseStorageManager {
         await this.postgres.query(
           `CREATE INDEX IF NOT EXISTS idx_outbound_events_user
              ON outbound_events(user_id)`
+        );
+
+        await this.postgres.query(
+          `CREATE INDEX IF NOT EXISTS idx_outbound_events_retry
+             ON outbound_events(status, next_retry_at ASC)
+             WHERE status = 'failed'`
         );
       })().catch((err) => {
         this.outboxReadyPromise = null;
@@ -423,6 +446,77 @@ class DatabaseStorageManager {
     );
   }
 
+  /**
+   * Get failed events eligible for retry (retry_count < max_retries AND next_retry_at <= NOW or null).
+   */
+  async getRetryableEvents({ limit = 50 } = {}) {
+    await this.ensureOutboxTable();
+
+    const result = await this.postgres.query(
+      `SELECT * FROM outbound_events
+       WHERE status = 'failed'
+         AND retry_count < max_retries
+         AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+       ORDER BY created_at ASC
+       LIMIT $1`,
+      [limit]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Increment retry_count and set next_retry_at for a failed event.
+   */
+  async incrementRetryCount(eventId, nextRetryAt = null) {
+    await this.ensureOutboxTable();
+
+    await this.postgres.query(
+      `UPDATE outbound_events
+       SET retry_count = retry_count + 1,
+           next_retry_at = $2
+       WHERE event_id = $1`,
+      [eventId, nextRetryAt]
+    );
+  }
+
+  /**
+   * Move an event to dead_letter status (retries exhausted).
+   */
+  async markOutboundEventDeadLetter(eventId, errorMessage = null, metadata = {}) {
+    await this.ensureOutboxTable();
+
+    await this.postgres.query(
+      `UPDATE outbound_events
+       SET status = 'dead_letter',
+           error_message = $2,
+           delivery_metadata = COALESCE(delivery_metadata, '{}'::jsonb) || $3::jsonb,
+           next_retry_at = NULL
+       WHERE event_id = $1`,
+      [eventId, errorMessage, JSON.stringify(metadata || {})]
+    );
+  }
+
+  /**
+   * List dead-letter events for inspection/manual replay.
+   */
+  async getDeadLetterEvents({ limit = 50, eventType = null } = {}) {
+    await this.ensureOutboxTable();
+
+    let query = `SELECT * FROM outbound_events WHERE status = 'dead_letter'`;
+    const params = [];
+
+    if (eventType) {
+      params.push(eventType);
+      query += ` AND event_type = $${params.length}`;
+    }
+
+    params.push(limit);
+    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
+
+    const result = await this.postgres.query(query, params);
+    return result.rows;
+  }
+
   async getOutboundEventStats(windowMinutes = 60) {
     await this.ensureOutboxTable();
 
@@ -441,8 +535,8 @@ class DatabaseStorageManager {
       )
     ]);
 
-    const byStatus = { pending: 0, dispatched: 0, failed: 0 };
-    const recentByStatus = { pending: 0, dispatched: 0, failed: 0 };
+    const byStatus = { pending: 0, dispatched: 0, failed: 0, dead_letter: 0 };
+    const recentByStatus = { pending: 0, dispatched: 0, failed: 0, dead_letter: 0 };
 
     for (const row of totalRows.rows) {
       byStatus[row.status] = Number(row.count);

@@ -192,6 +192,112 @@ class SchedulerRunner {
     return summary;
   }
 
+  /**
+   * Retry cycle: picks up failed outbound events, re-delivers, and dead-letters exhausted ones.
+   */
+  async runRetryCycle({ limit = 50 } = {}) {
+    if (!this.hasOutboxSupport() || typeof this.db.getRetryableEvents !== 'function') {
+      return { ok: false, reason: 'outbox_retry_not_supported' };
+    }
+
+    const retryable = await this.db.getRetryableEvents({ limit });
+
+    const summary = {
+      found: retryable.length,
+      retried: 0,
+      delivered: 0,
+      failed: 0,
+      dead_lettered: 0,
+      results: []
+    };
+
+    for (const event of retryable) {
+      const envelope = event.payload || {};
+      let deliveryResult;
+
+      try {
+        deliveryResult = await this.delivery.deliver(envelope);
+      } catch (err) {
+        deliveryResult = {
+          delivered: false,
+          mode: this.delivery?.mode || 'unknown',
+          reason: err.message
+        };
+      }
+
+      summary.retried += 1;
+      const newRetryCount = (event.retry_count || 0) + 1;
+      const maxRetries = event.max_retries || this.delivery.retryMax || 5;
+
+      if (deliveryResult?.delivered) {
+        // Success — mark dispatched
+        await this.db.markOutboundEventDispatched(event.event_id, {
+          delivery: deliveryResult,
+          retry_attempt: newRetryCount
+        });
+        summary.delivered += 1;
+
+        summary.results.push({
+          event_id: event.event_id,
+          status: 'dispatched',
+          retry_attempt: newRetryCount
+        });
+      } else if (newRetryCount >= maxRetries) {
+        // Exhausted — dead-letter
+        await this.db.incrementRetryCount(event.event_id, null);
+        await this.db.markOutboundEventDeadLetter(
+          event.event_id,
+          deliveryResult?.reason || 'retries_exhausted',
+          { delivery: deliveryResult, retry_attempt: newRetryCount }
+        );
+        summary.dead_lettered += 1;
+
+        summary.results.push({
+          event_id: event.event_id,
+          status: 'dead_letter',
+          retry_attempt: newRetryCount,
+          reason: deliveryResult?.reason || 'retries_exhausted'
+        });
+      } else {
+        // Still retryable — bump count and set next_retry_at
+        const backoffMs = this.delivery.calcBackoffMs(newRetryCount - 1);
+        const nextRetryAt = new Date(Date.now() + backoffMs);
+
+        await this.db.incrementRetryCount(event.event_id, nextRetryAt);
+        summary.failed += 1;
+
+        summary.results.push({
+          event_id: event.event_id,
+          status: 'retry_scheduled',
+          retry_attempt: newRetryCount,
+          next_retry_at: nextRetryAt.toISOString(),
+          backoff_ms: backoffMs
+        });
+      }
+    }
+
+    // Audit log
+    try {
+      await this.db.logAgentAction(
+        'scheduler-retry',
+        null,
+        null,
+        'retry_cycle',
+        null,
+        'success',
+        null,
+        {
+          found: summary.found,
+          retried: summary.retried,
+          delivered: summary.delivered,
+          dead_lettered: summary.dead_lettered
+        }
+      );
+    } catch (_e) { /* best-effort */ }
+
+    return summary;
+  }
+
   async runMorningCycle({ limitUsers = 100 } = {}) {
     const users = await this.db.listUserIds(limitUsers);
 
