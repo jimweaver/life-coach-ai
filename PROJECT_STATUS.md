@@ -99,18 +99,24 @@ Updated: 2026-02-27
    - Scheduler now emits `systemEvent` envelopes for monitor/morning cycles
    - Delivery backends: `none | redis | webhook` (env-controlled)
    - Redis queue key configurable by `CRON_EVENT_REDIS_LIST_KEY`
+   - Added outbound delivery table helpers in DB manager (`outbound_events` auto-ensure)
    - Added tests: `test-cron-delivery.js`, `test-scheduler-delivery.js`
    - `/health` now exposes `cron_delivery_mode`
+
+14. **Guardrails policy tuning + alert hooks added**
+   - POST rate-limit now supports per-route buckets (`chat/jobs/intervention/goals/default`)
+   - Per-route thresholds configurable by env (`RATE_LIMIT_MAX_CHAT`, `RATE_LIMIT_MAX_JOBS`, ...)
+   - Added rate-limit exceed alert hook → `rate-limit-guard` audit logs
+   - `/health` now exposes `rate_limit_policy`
+   - Added test: `test-rate-limit-policy.js`
 
 ---
 
 ## In progress / next
 
-1. Extend production guardrails:
-   - endpoint-level policy tuning (per-route thresholds)
-   - alerting hooks for repeated rate-limit hits
+1. Add scheduler delivery observability dashboard/query endpoint (queue depth + failure rate)
 2. Add external-source quality checks (freshness + duplicate suppression) for data collector
-3. Add scheduler delivery observability dashboard/query endpoint (queue depth + failure rate)
+3. Add delivery retry/backoff + dead-letter handling for cron-event transport
 4. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---
@@ -130,6 +136,7 @@ npm run test:day3
 npm run test:day4
 npm run test:scheduler
 npm run test:guardrails
+npm run test:policy
 npm run test:data
 npm run test:adapter
 npm run test:audit

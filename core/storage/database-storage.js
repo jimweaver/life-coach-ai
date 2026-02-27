@@ -29,6 +29,8 @@ class DatabaseStorageManager {
       console.error('PostgreSQL connection error:', err);
     });
 
+    this.outboxReadyPromise = null;
+
     console.log('✅ DatabaseStorageManager initialized');
   }
 
@@ -316,6 +318,109 @@ class DatabaseStorageManager {
       [agentId, limit]
     );
     return result.rows;
+  }
+
+  // ========== Outbound Delivery Pipeline ==========
+
+  async ensureOutboxTable() {
+    if (!this.outboxReadyPromise) {
+      this.outboxReadyPromise = (async () => {
+        await this.postgres.query(
+          `CREATE TABLE IF NOT EXISTS outbound_events (
+             event_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+             dispatched_at TIMESTAMP WITH TIME ZONE,
+             source VARCHAR(50) NOT NULL,
+             channel VARCHAR(50) NOT NULL DEFAULT 'cron-event',
+             event_type VARCHAR(80) NOT NULL,
+             user_id UUID REFERENCES user_profiles(user_id) ON DELETE CASCADE,
+             status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'dispatched', 'failed')),
+             payload JSONB DEFAULT '{}',
+             delivery_metadata JSONB DEFAULT '{}',
+             error_message TEXT
+           )`
+        );
+
+        await this.postgres.query(
+          `CREATE INDEX IF NOT EXISTS idx_outbound_events_status_created
+             ON outbound_events(status, created_at DESC)`
+        );
+
+        await this.postgres.query(
+          `CREATE INDEX IF NOT EXISTS idx_outbound_events_user
+             ON outbound_events(user_id)`
+        );
+      })().catch((err) => {
+        this.outboxReadyPromise = null;
+        throw err;
+      });
+    }
+
+    return this.outboxReadyPromise;
+  }
+
+  async enqueueOutboundEvent({
+    eventType,
+    userId = null,
+    channel = 'cron-event',
+    source = 'scheduler',
+    payload = {}
+  }) {
+    await this.ensureOutboxTable();
+
+    const result = await this.postgres.query(
+      `INSERT INTO outbound_events (event_type, user_id, channel, source, payload, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'pending', NOW())
+       RETURNING event_id`,
+      [eventType, userId, channel, source, JSON.stringify(payload)]
+    );
+
+    return result.rows[0].event_id;
+  }
+
+  async listOutboundEvents({ status = 'pending', limit = 50, eventType = null } = {}) {
+    await this.ensureOutboxTable();
+
+    let query = `SELECT * FROM outbound_events WHERE status = $1`;
+    const params = [status];
+
+    if (eventType) {
+      query += ` AND event_type = $2`;
+      params.push(eventType);
+    }
+
+    query += ` ORDER BY created_at ASC LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await this.postgres.query(query, params);
+    return result.rows;
+  }
+
+  async markOutboundEventDispatched(eventId, metadata = {}) {
+    await this.ensureOutboxTable();
+
+    await this.postgres.query(
+      `UPDATE outbound_events
+       SET status = 'dispatched',
+           dispatched_at = NOW(),
+           delivery_metadata = COALESCE(delivery_metadata, '{}'::jsonb) || $2::jsonb,
+           error_message = NULL
+       WHERE event_id = $1`,
+      [eventId, JSON.stringify(metadata || {})]
+    );
+  }
+
+  async markOutboundEventFailed(eventId, errorMessage = null, metadata = {}) {
+    await this.ensureOutboxTable();
+
+    await this.postgres.query(
+      `UPDATE outbound_events
+       SET status = 'failed',
+           error_message = $2,
+           delivery_metadata = COALESCE(delivery_metadata, '{}'::jsonb) || $3::jsonb
+       WHERE event_id = $1`,
+      [eventId, errorMessage, JSON.stringify(metadata || {})]
+    );
   }
 
   // ========== Scheduler Support ==========

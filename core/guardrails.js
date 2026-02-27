@@ -34,7 +34,8 @@ function buildRateLimitResponse(res, retryAfterMs) {
 function createRateLimiter({
   windowMs = 60_000,
   maxRequests = 120,
-  keyFn = defaultKeyFn
+  keyFn = defaultKeyFn,
+  onLimited = null
 } = {}) {
   const bucket = new Map();
 
@@ -47,6 +48,18 @@ function createRateLimiter({
     const recent = existing.filter((ts) => ts > windowStart);
 
     if (recent.length >= maxRequests) {
+      if (typeof onLimited === 'function') {
+        Promise.resolve(onLimited({
+          backend: 'memory',
+          key,
+          count: recent.length,
+          maxRequests,
+          windowMs,
+          retryAfterMs: windowMs,
+          route: req.path,
+          method: req.method
+        })).catch(() => {});
+      }
       return buildRateLimitResponse(res, windowMs);
     }
 
@@ -62,9 +75,10 @@ function createRedisRateLimiter({
   maxRequests = 120,
   keyFn = defaultKeyFn,
   keyPrefix = 'lifecoach:rate-limit',
-  fallbackToMemory = true
+  fallbackToMemory = true,
+  onLimited = null
 } = {}) {
-  const memoryFallback = createRateLimiter({ windowMs, maxRequests, keyFn });
+  const memoryFallback = createRateLimiter({ windowMs, maxRequests, keyFn, onLimited });
 
   if (!redis) {
     return memoryFallback;
@@ -93,7 +107,20 @@ function createRedisRateLimiter({
       }
 
       if (count > maxRequests) {
-        return buildRateLimitResponse(res, Math.max(1, ttlMs));
+        const retryAfterMs = Math.max(1, ttlMs);
+        if (typeof onLimited === 'function') {
+          Promise.resolve(onLimited({
+            backend: 'redis',
+            key,
+            count,
+            maxRequests,
+            windowMs,
+            retryAfterMs,
+            route: req.path,
+            method: req.method
+          })).catch(() => {});
+        }
+        return buildRateLimitResponse(res, retryAfterMs);
       }
 
       return next();

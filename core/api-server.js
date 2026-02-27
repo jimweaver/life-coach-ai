@@ -40,23 +40,87 @@ async function createServer() {
   const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
   const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || 120);
   const rateLimitBackend = String(process.env.RATE_LIMIT_BACKEND || 'redis').toLowerCase();
+  const rateLimitPrefix = process.env.RATE_LIMIT_KEY_PREFIX || 'lifecoach:rate-limit';
 
-  const writeLimiter = rateLimitBackend === 'memory'
-    ? createRateLimiter({
+  const rateLimitPolicy = {
+    default: Number(process.env.RATE_LIMIT_MAX_DEFAULT || rateLimitMax),
+    chat: Number(process.env.RATE_LIMIT_MAX_CHAT || rateLimitMax),
+    jobs: Number(process.env.RATE_LIMIT_MAX_JOBS || rateLimitMax),
+    intervention: Number(process.env.RATE_LIMIT_MAX_INTERVENTION || rateLimitMax),
+    goals: Number(process.env.RATE_LIMIT_MAX_GOALS || rateLimitMax)
+  };
+
+  const normalizeClientPart = (value) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    const base = String(raw || 'unknown').split(',')[0].trim();
+    if (!base) return 'unknown';
+    return base.replace(/[^a-zA-Z0-9:._-]/g, '_');
+  };
+
+  const getRouteBucket = (req) => {
+    if (req.path === '/chat') return 'chat';
+    if (req.path.startsWith('/jobs/')) return 'jobs';
+    if (req.path.startsWith('/intervention/')) return 'intervention';
+    if (req.path.startsWith('/goals/')) return 'goals';
+    return 'default';
+  };
+
+  const makeLimiter = (bucket, maxRequests) => {
+    const keyFn = (req) => {
+      const client = normalizeClientPart(req.headers['x-forwarded-for'] || req.ip);
+      return `${bucket}:${client}`;
+    };
+
+    const onLimited = async (event) => {
+      try {
+        await db.logAgentAction(
+          'rate-limit-guard',
+          null,
+          null,
+          'rate_limit_exceeded',
+          null,
+          'success',
+          null,
+          {
+            bucket,
+            ...event
+          }
+        );
+      } catch (_e) {
+        // best-effort logging only
+      }
+    };
+
+    const commonOptions = {
       windowMs: rateLimitWindowMs,
-      maxRequests: rateLimitMax
-    })
-    : createRedisRateLimiter({
-      redis: db.redis,
-      windowMs: rateLimitWindowMs,
-      maxRequests: rateLimitMax,
-      keyPrefix: process.env.RATE_LIMIT_KEY_PREFIX || 'lifecoach:rate-limit',
-      fallbackToMemory: true
-    });
+      maxRequests,
+      keyFn,
+      onLimited
+    };
+
+    return rateLimitBackend === 'memory'
+      ? createRateLimiter(commonOptions)
+      : createRedisRateLimiter({
+        ...commonOptions,
+        redis: db.redis,
+        keyPrefix: `${rateLimitPrefix}:${bucket}`,
+        fallbackToMemory: true
+      });
+  };
+
+  const writeLimiters = {
+    default: makeLimiter('default', rateLimitPolicy.default),
+    chat: makeLimiter('chat', rateLimitPolicy.chat),
+    jobs: makeLimiter('jobs', rateLimitPolicy.jobs),
+    intervention: makeLimiter('intervention', rateLimitPolicy.intervention),
+    goals: makeLimiter('goals', rateLimitPolicy.goals)
+  };
 
   app.use((req, res, next) => {
-    if (req.method === 'POST') return writeLimiter(req, res, next);
-    next();
+    if (req.method !== 'POST') return next();
+    const bucket = getRouteBucket(req);
+    const limiter = writeLimiters[bucket] || writeLimiters.default;
+    return limiter(req, res, next);
   });
 
   app.param('userId', (req, res, next, userId) => {
@@ -72,6 +136,7 @@ async function createServer() {
       ok: status.redis && status.postgres,
       services: status,
       rate_limit_backend: rateLimitBackend,
+      rate_limit_policy: rateLimitPolicy,
       cron_delivery_mode: cronDeliveryMode,
       time: new Date().toISOString()
     });
