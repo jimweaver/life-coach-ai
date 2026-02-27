@@ -372,13 +372,26 @@ Updated: 2026-02-27
    - Added coverage: `test-deploy-event-trend.js`
    - Deployment ops docs updated with trend endpoint usage
 
+45. **Ownership drift suppression controls added (cooldown + duplicate window)**
+   - `GET /jobs/delivery/ownership-drift` now supports route suppression guards
+   - Added suppression env controls:
+     - `ALERT_OWNER_DRIFT_SUPPRESSION_ENABLED`
+     - `ALERT_OWNER_DRIFT_COOLDOWN_MINUTES`
+     - `ALERT_OWNER_DRIFT_DUPLICATE_WINDOW_MINUTES`
+     - `ALERT_OWNER_DRIFT_STATE_KEY`
+   - Drift route now suppresses duplicate paging in cooldown/duplicate windows
+   - Emits audit signal: `ownership_drift_route_suppressed`
+   - `/health` now exposes owner drift suppression config snapshot
+   - Added coverage: `test-alert-ownership-drift-suppression.js`
+   - Governance docs updated with suppression policy verification
+
 ---
 
 ## In progress / next
 
-1. Add ownership drift suppression controls (cooldown + duplicate alert window)
-2. Add canary drift auto-suppression controls (prevent duplicate drift paging within cooldown)
-3. Add deploy trend anomaly detector (spike/latency failure regression alerts)
+1. Add canary drift auto-suppression controls (prevent duplicate drift paging within cooldown)
+2. Add deploy trend anomaly detector (spike/latency failure regression alerts)
+3. Add ownership drift suppression observability endpoint (state + cooldown remaining)
 
 ---
 
@@ -430,6 +443,7 @@ npm run test:alert-policy
 npm run test:alert-ownership
 npm run test:alert-drift
 npm run test:alert-drift-route
+npm run test:alert-drift-suppress
 npm run test:inline-retry
 npm run test:deploy
 npm run test:deploy-observability

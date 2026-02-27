@@ -51,6 +51,23 @@ async function createServer() {
   const ownershipDriftDetector = new AlertOwnershipDriftDetector();
   const canaryDriftDetector = new CanaryDriftDetector();
 
+  const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+  const ownershipDriftRoutingPolicy = {
+    routeEnabled: String(process.env.ALERT_OWNER_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+    routeMinLevel: String(process.env.ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL || 'critical').toLowerCase(),
+    suppressionEnabled: String(process.env.ALERT_OWNER_DRIFT_SUPPRESSION_ENABLED || 'true').toLowerCase() !== 'false',
+    suppressionCooldownMinutes: Number(process.env.ALERT_OWNER_DRIFT_COOLDOWN_MINUTES || 30),
+    suppressionDuplicateWindowMinutes: Number(process.env.ALERT_OWNER_DRIFT_DUPLICATE_WINDOW_MINUTES || 180),
+    suppressionStateKey: process.env.ALERT_OWNER_DRIFT_STATE_KEY || 'lifecoach:ownership-drift:route-state',
+    suppressionStateTtlSec: Number(process.env.ALERT_OWNER_DRIFT_STATE_TTL_SEC || 604800)
+  };
+
+  let ownershipDriftRouteStateMemory = {
+    last_routed_at_ms: 0,
+    last_signature: null,
+    last_level: 'info'
+  };
+
   app.use(helmet());
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
@@ -178,6 +195,125 @@ async function createServer() {
     };
   };
 
+  const buildOwnershipDriftSignature = (drift) => {
+    const level = String(drift?.level || 'info').toLowerCase();
+    const reasons = Array.isArray(drift?.reasons)
+      ? [...drift.reasons].map((r) => String(r).toLowerCase()).sort().join('|')
+      : '';
+    return `${level}:${reasons}`;
+  };
+
+  const loadOwnershipDriftRouteState = async () => {
+    const key = ownershipDriftRoutingPolicy.suppressionStateKey;
+
+    if (db.redis && key) {
+      try {
+        const raw = await db.redis.get(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return {
+            last_routed_at_ms: Number(parsed.last_routed_at_ms || 0),
+            last_signature: parsed.last_signature || null,
+            last_level: String(parsed.last_level || 'info').toLowerCase()
+          };
+        }
+      } catch (_e) {
+        // fallback to memory state
+      }
+    }
+
+    return { ...ownershipDriftRouteStateMemory };
+  };
+
+  const saveOwnershipDriftRouteState = async (state) => {
+    ownershipDriftRouteStateMemory = {
+      last_routed_at_ms: Number(state?.last_routed_at_ms || 0),
+      last_signature: state?.last_signature || null,
+      last_level: String(state?.last_level || 'info').toLowerCase()
+    };
+
+    const key = ownershipDriftRoutingPolicy.suppressionStateKey;
+    if (db.redis && key) {
+      try {
+        await db.redis.setex(
+          key,
+          Math.max(60, ownershipDriftRoutingPolicy.suppressionStateTtlSec),
+          JSON.stringify(ownershipDriftRouteStateMemory)
+        );
+      } catch (_e) {
+        // best effort
+      }
+    }
+  };
+
+  const evaluateOwnershipDriftSuppression = async (drift) => {
+    const policy = ownershipDriftRoutingPolicy;
+
+    if (!policy.suppressionEnabled) {
+      return {
+        enabled: false,
+        suppressed: false,
+        reason: null,
+        signature: buildOwnershipDriftSignature(drift),
+        state: await loadOwnershipDriftRouteState()
+      };
+    }
+
+    const state = await loadOwnershipDriftRouteState();
+    const nowMs = Date.now();
+    const signature = buildOwnershipDriftSignature(drift);
+    const currentLevel = String(drift?.level || 'info').toLowerCase();
+    const currentRank = ownerDriftLevelRank[currentLevel] || 1;
+    const lastRank = ownerDriftLevelRank[state.last_level] || 1;
+
+    const duplicateWindowMs = Math.max(0, policy.suppressionDuplicateWindowMinutes) * 60_000;
+    const cooldownMs = Math.max(0, policy.suppressionCooldownMinutes) * 60_000;
+
+    const sinceLastMs = state.last_routed_at_ms > 0
+      ? Math.max(0, nowMs - state.last_routed_at_ms)
+      : null;
+
+    const duplicateWithinWindow = state.last_signature
+      && state.last_signature === signature
+      && sinceLastMs !== null
+      && sinceLastMs < duplicateWindowMs;
+
+    const cooldownActive = sinceLastMs !== null
+      && sinceLastMs < cooldownMs
+      && currentRank <= lastRank;
+
+    if (duplicateWithinWindow) {
+      return {
+        enabled: true,
+        suppressed: true,
+        reason: 'duplicate_within_window',
+        signature,
+        remaining_ms: Math.max(0, duplicateWindowMs - sinceLastMs),
+        state
+      };
+    }
+
+    if (cooldownActive) {
+      return {
+        enabled: true,
+        suppressed: true,
+        reason: 'cooldown_active',
+        signature,
+        remaining_ms: Math.max(0, cooldownMs - sinceLastMs),
+        state
+      };
+    }
+
+    return {
+      enabled: true,
+      suppressed: false,
+      reason: null,
+      signature,
+      remaining_ms: 0,
+      state
+    };
+  };
+
   const normalizeClientPart = (value) => {
     const raw = Array.isArray(value) ? value[0] : value;
     const base = String(raw || 'unknown').split(',')[0].trim();
@@ -300,8 +436,12 @@ async function createServer() {
         owner_drift_warn_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_WARN_STALE_MINUTES || 120),
         owner_drift_critical_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_CRITICAL_STALE_MINUTES || 360),
         owner_drift_strict: String(process.env.ALERT_OWNER_DRIFT_STRICT || 'false').toLowerCase() === 'true',
-        owner_drift_route_enabled: String(process.env.ALERT_OWNER_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
-        owner_drift_route_min_level: String(process.env.ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL || 'critical').toLowerCase()
+        owner_drift_route_enabled: ownershipDriftRoutingPolicy.routeEnabled,
+        owner_drift_route_min_level: ownershipDriftRoutingPolicy.routeMinLevel,
+        owner_drift_suppression_enabled: ownershipDriftRoutingPolicy.suppressionEnabled,
+        owner_drift_suppression_cooldown_minutes: ownershipDriftRoutingPolicy.suppressionCooldownMinutes,
+        owner_drift_suppression_duplicate_window_minutes: ownershipDriftRoutingPolicy.suppressionDuplicateWindowMinutes,
+        owner_drift_suppression_state_key_configured: !!ownershipDriftRoutingPolicy.suppressionStateKey
       },
       canary_drift_policy: {
         route_enabled: String(process.env.CANARY_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
@@ -606,11 +746,17 @@ async function createServer() {
         : String(req.query.emitAudit).toLowerCase() !== 'false';
 
       const routeEnabled = req.query.route === undefined
-        ? String(process.env.ALERT_OWNER_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false'
+        ? ownershipDriftRoutingPolicy.routeEnabled
         : String(req.query.route).toLowerCase() !== 'false';
 
-      const routeMinLevel = String(process.env.ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL || 'critical').toLowerCase();
-      const levelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+      const routeMinLevel = String(req.query.routeMinLevel || ownershipDriftRoutingPolicy.routeMinLevel).toLowerCase();
+      if (!['info', 'warn', 'warning', 'critical'].includes(routeMinLevel)) {
+        return badRequest(res, ['routeMinLevel must be one of info|warn|critical']);
+      }
+
+      const suppressionEnabled = req.query.suppress === undefined
+        ? ownershipDriftRoutingPolicy.suppressionEnabled
+        : String(req.query.suppress).toLowerCase() !== 'false';
 
       if (!scheduler || typeof scheduler.getAlertRoutePolicy !== 'function') {
         return res.status(400).json({
@@ -623,9 +769,24 @@ async function createServer() {
       const drift = ownershipDriftDetector.computeDrift(policy);
 
       let routed = null;
-      const shouldRoute = routeEnabled
+      let suppression = {
+        enabled: !!suppressionEnabled,
+        suppressed: false,
+        reason: null,
+        remaining_ms: 0,
+        signature: buildOwnershipDriftSignature(drift),
+        state: await loadOwnershipDriftRouteState()
+      };
+
+      const routeCandidate = routeEnabled
         && drift.drift_detected
-        && (levelRank[drift.level] || 1) >= (levelRank[routeMinLevel] || 3);
+        && (ownerDriftLevelRank[drift.level] || 1) >= (ownerDriftLevelRank[routeMinLevel] || 3);
+
+      if (routeCandidate && suppressionEnabled) {
+        suppression = await evaluateOwnershipDriftSuppression(drift);
+      }
+
+      const shouldRoute = routeCandidate && !suppression.suppressed;
 
       if (shouldRoute) {
         const alert = {
@@ -650,6 +811,12 @@ async function createServer() {
         };
 
         routed = await alertRouter.routeDeliveryAlert(alert);
+
+        await saveOwnershipDriftRouteState({
+          last_routed_at_ms: Date.now(),
+          last_signature: suppression.signature,
+          last_level: String(drift.level || 'info').toLowerCase()
+        });
       }
 
       if (emitAudit && drift.drift_detected) {
@@ -671,11 +838,32 @@ async function createServer() {
               route: {
                 enabled: routeEnabled,
                 min_level: routeMinLevel,
+                candidate: !!routeCandidate,
                 attempted: !!shouldRoute,
+                suppression,
                 routed
               }
             }
           );
+
+          if (routeCandidate && suppression.suppressed) {
+            await db.logAgentAction(
+              'delivery-alert',
+              null,
+              null,
+              'ownership_drift_route_suppressed',
+              null,
+              'success',
+              null,
+              {
+                level: drift.level,
+                reasons: drift.reasons,
+                suppression,
+                route_enabled: routeEnabled,
+                route_min_level: routeMinLevel
+              }
+            );
+          }
         } catch (_e) {
           // best effort only
         }
@@ -688,7 +876,9 @@ async function createServer() {
         route: {
           enabled: routeEnabled,
           min_level: routeMinLevel,
-          attempted: !!shouldRoute
+          candidate: !!routeCandidate,
+          attempted: !!shouldRoute,
+          suppression
         },
         routed
       });

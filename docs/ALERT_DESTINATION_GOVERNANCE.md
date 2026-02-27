@@ -69,6 +69,11 @@ Use drift detector to catch stale/missing owner assignments:
 - Drift routing env:
   - `ALERT_OWNER_DRIFT_ROUTE_ENABLED` (default: `true`)
   - `ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL` (default: `critical`)
+- Drift suppression env (duplicate paging guard):
+  - `ALERT_OWNER_DRIFT_SUPPRESSION_ENABLED` (default: `true`)
+  - `ALERT_OWNER_DRIFT_COOLDOWN_MINUTES` (default: `30`)
+  - `ALERT_OWNER_DRIFT_DUPLICATE_WINDOW_MINUTES` (default: `180`)
+  - `ALERT_OWNER_DRIFT_STATE_KEY` (default: `lifecoach:ownership-drift:route-state`)
 
 Drift will raise reasons such as:
 - `oncall_sync_stale`
@@ -137,6 +142,7 @@ After policy changes:
    - `npm run test:alert-policy`
    - `npm run test:alert-ownership`
    - `npm run test:alert-drift`
+   - `npm run test:alert-drift-suppress`
    - `npm run test:alerts`
 3. Validate health snapshot includes alert policy:
    - `GET /health` → `delivery_alert_policy`

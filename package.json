@@ -33,6 +33,7 @@
     "test:alert-ownership": "node test-alert-ownership-sync.js",
     "test:alert-drift": "node test-alert-ownership-drift.js",
     "test:alert-drift-route": "node test-alert-ownership-drift-routing.js",
+    "test:alert-drift-suppress": "node test-alert-ownership-drift-suppression.js",
     "test:inline-retry": "node test-inline-dispatch-retry.js",
     "test:deploy": "node test-deploy-wrapper.js",
     "test:deploy-observability": "node test-deploy-observability.js",
