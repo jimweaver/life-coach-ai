@@ -665,13 +665,24 @@ Updated: 2026-02-27
    - Added npm script: `test:deep-health`
    - Graceful shutdown test passes
 
+72. **Orchestrator performance metrics endpoint**
+   - Added metrics tracking to `OrchestratorEngine` class
+   - Tracks: request counts (total, by mode, by domain), latency histogram, errors
+   - Added `recordMetrics()` method called on each request
+   - Added `getMetrics()` method with uptime, rates, percentiles
+   - Added `GET /metrics/orchestrator` endpoint to API server
+   - Returns: uptime, request stats, latency histogram + percentiles, error rates
+   - Added test: `test-orchestrator-metrics.js`
+   - Added npm script: `test:orchestrator-metrics`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add orchestrator performance metrics endpoint
-2. Add API request latency histogram metrics
-3. Add database query performance tracking
+1. Add API request latency histogram metrics
+2. Add database query performance tracking
+3. Add deploy trend telemetry rollup for trend dashboards
 
 ---
 

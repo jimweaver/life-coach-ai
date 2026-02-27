@@ -1349,6 +1349,23 @@ async function createServer() {
     }
   });
 
+  // Orchestrator performance metrics endpoint
+  app.get('/metrics/orchestrator', (_req, res) => {
+    try {
+      const metrics = engine.getMetrics();
+      res.json({
+        ok: true,
+        ...metrics
+      });
+    } catch (err) {
+      console.error('[Orchestrator Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   app.post('/chat', async (req, res) => {
     try {
       const errors = validateChatPayload(req.body);

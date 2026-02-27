@@ -17,6 +17,31 @@ class OrchestratorEngine {
     this.modelRouter = new ModelRouter();
     this.dataCollector = new DataCollector();
     this.agents = null;
+
+    // Performance metrics tracking
+    this.metrics = {
+      requests: {
+        total: 0,
+        byMode: {},
+        byDomain: {}
+      },
+      latency: {
+        totalMs: 0,
+        count: 0,
+        histogram: {
+          under100: 0,   // <100ms
+          under500: 0,   // 100-500ms
+          under1000: 0,  // 500-1000ms
+          under2000: 0,  // 1-2s
+          over2000: 0    // >2s
+        }
+      },
+      errors: {
+        total: 0,
+        byType: {}
+      },
+      startedAt: Date.now()
+    };
   }
 
   async init() {
@@ -180,98 +205,229 @@ class OrchestratorEngine {
 
   async process({ userId, input, sessionId = uuidv4() }) {
     const start = Date.now();
+    let result;
 
-    const intent = this.classifyIntent(input);
-    const context = await this.retrieveContext(userId, sessionId);
+    try {
+      const intent = this.classifyIntent(input);
+      const context = await this.retrieveContext(userId, sessionId);
 
-    // Emergency short-circuit
-    if (intent.urgency >= 5) {
-      const emergency = this.safetyCheck(input);
-      if (!emergency.passed) {
+      // Emergency short-circuit
+      if (intent.urgency >= 5) {
+        const emergency = this.safetyCheck(input);
+        if (!emergency.passed) {
+          await this.persistConversation({
+            userId,
+            sessionId,
+            userInput: input,
+            assistantOutput: emergency.safe_output,
+            agentId: 'safety-guardian'
+          });
+
+          await this.db.setSession(sessionId, {
+            user_id: userId,
+            current_intent: intent,
+            last_message_at: new Date().toISOString()
+          });
+
+          const elapsedMs = Date.now() - start;
+          this.recordMetrics({ mode: 'emergency', domains: ['emergency'], elapsedMs });
+
+          return {
+            session_id: sessionId,
+            mode: 'emergency',
+            output: emergency.safe_output,
+            elapsed_ms: elapsedMs
+          };
+        }
+      }
+
+      // Skill creation detection short-circuit
+      const skillResult = SkillLearning.analyze(input);
+      if (skillResult && skillResult.detected) {
+        const response = SkillLearning.buildResponse(skillResult);
+        const output = response?.message || '我檢測到你想創建一個 skill，讓我幫你分析一下...';
+
         await this.persistConversation({
           userId,
           sessionId,
           userInput: input,
-          assistantOutput: emergency.safe_output,
-          agentId: 'safety-guardian'
+          assistantOutput: output,
+          agentId: 'skill-learning'
         });
 
         await this.db.setSession(sessionId, {
           user_id: userId,
-          current_intent: intent,
+          current_intent: { primary_domain: 'skill_learning', domains: ['skill'], urgency: 1, confidence: 1 },
           last_message_at: new Date().toISOString()
         });
 
+        const elapsedMs = Date.now() - start;
+        this.recordMetrics({ mode: 'skill_learning', domains: ['skill'], elapsedMs });
+
         return {
           session_id: sessionId,
-          mode: 'emergency',
-          output: emergency.safe_output,
-          elapsed_ms: Date.now() - start
+          mode: 'skill_learning',
+          output,
+          skill_learning: {
+            detected: true,
+            description: skillResult.description,
+            keywords: skillResult.keywords
+          },
+          elapsed_ms: elapsedMs
         };
       }
-    }
 
-    // Skill creation detection short-circuit
-    const skillResult = SkillLearning.analyze(input);
-    if (skillResult && skillResult.detected) {
-      const response = SkillLearning.buildResponse(skillResult);
-      const output = response?.message || '我檢測到你想創建一個 skill，讓我幫你分析一下...';
+      const domainRun = await this.runDomains(intent.domains, input, context);
+      const merged = this.composeUserResponse(domainRun);
+
+      const safety = this.safetyCheck(merged);
+      const finalOutput = safety.passed ? merged : safety.safe_output;
 
       await this.persistConversation({
         userId,
         sessionId,
         userInput: input,
-        assistantOutput: output,
-        agentId: 'skill-learning'
+        assistantOutput: finalOutput,
+        agentId: safety.passed ? (intent.domains.join(',') || 'career') : 'safety-guardian'
       });
 
       await this.db.setSession(sessionId, {
         user_id: userId,
-        current_intent: { primary_domain: 'skill_learning', domains: ['skill'], urgency: 1, confidence: 1 },
+        current_intent: intent,
         last_message_at: new Date().toISOString()
       });
 
+      const elapsedMs = Date.now() - start;
+      const mode = intent.domains.length > 1 ? 'multi-domain' : 'single-domain';
+      this.recordMetrics({ mode, domains: intent.domains, elapsedMs });
+
       return {
         session_id: sessionId,
-        mode: 'skill_learning',
-        output,
-        skill_learning: {
-          detected: true,
-          description: skillResult.description,
-          keywords: skillResult.keywords
-        },
-        elapsed_ms: Date.now() - start
+        mode,
+        intent,
+        risk_level: safety.risk_level,
+        conflicts: domainRun.conflicts,
+        output: finalOutput,
+        elapsed_ms: elapsedMs
       };
+    } catch (error) {
+      const elapsedMs = Date.now() - start;
+      this.recordMetrics({ mode: 'error', domains: [], elapsedMs, error });
+      throw error;
+    }
+  }
+
+  recordMetrics({ mode, domains, elapsedMs, error = null }) {
+    // Track request counts
+    this.metrics.requests.total++;
+    this.metrics.requests.byMode[mode] = (this.metrics.requests.byMode[mode] || 0) + 1;
+
+    domains.forEach(domain => {
+      this.metrics.requests.byDomain[domain] = (this.metrics.requests.byDomain[domain] || 0) + 1;
+    });
+
+    // Track latency
+    this.metrics.latency.totalMs += elapsedMs;
+    this.metrics.latency.count++;
+
+    if (elapsedMs < 100) {
+      this.metrics.latency.histogram.under100++;
+    } else if (elapsedMs < 500) {
+      this.metrics.latency.histogram.under500++;
+    } else if (elapsedMs < 1000) {
+      this.metrics.latency.histogram.under1000++;
+    } else if (elapsedMs < 2000) {
+      this.metrics.latency.histogram.under2000++;
+    } else {
+      this.metrics.latency.histogram.over2000++;
     }
 
-    const domainRun = await this.runDomains(intent.domains, input, context);
-    const merged = this.composeUserResponse(domainRun);
+    // Track errors
+    if (error) {
+      this.metrics.errors.total++;
+      const errorType = error.name || 'UnknownError';
+      this.metrics.errors.byType[errorType] = (this.metrics.errors.byType[errorType] || 0) + 1;
+    }
+  }
 
-    const safety = this.safetyCheck(merged);
-    const finalOutput = safety.passed ? merged : safety.safe_output;
-
-    await this.persistConversation({
-      userId,
-      sessionId,
-      userInput: input,
-      assistantOutput: finalOutput,
-      agentId: safety.passed ? (intent.domains.join(',') || 'career') : 'safety-guardian'
-    });
-
-    await this.db.setSession(sessionId, {
-      user_id: userId,
-      current_intent: intent,
-      last_message_at: new Date().toISOString()
-    });
+  getMetrics() {
+    const uptime = Date.now() - this.metrics.startedAt;
+    const avgLatency = this.metrics.latency.count > 0
+      ? Math.round(this.metrics.latency.totalMs / this.metrics.latency.count)
+      : 0;
 
     return {
-      session_id: sessionId,
-      mode: intent.domains.length > 1 ? 'multi-domain' : 'single-domain',
-      intent,
-      risk_level: safety.risk_level,
-      conflicts: domainRun.conflicts,
-      output: finalOutput,
-      elapsed_ms: Date.now() - start
+      uptime_ms: uptime,
+      uptime_formatted: this.formatDuration(uptime),
+      requests: {
+        total: this.metrics.requests.total,
+        by_mode: this.metrics.requests.byMode,
+        by_domain: this.metrics.requests.byDomain,
+        rate_per_minute: this.metrics.requests.total > 0
+          ? (this.metrics.requests.total / (uptime / 60000)).toFixed(2)
+          : 0
+      },
+      latency: {
+        average_ms: avgLatency,
+        histogram: this.metrics.latency.histogram,
+        percentiles: this.calculatePercentiles()
+      },
+      errors: {
+        total: this.metrics.errors.total,
+        rate: this.metrics.requests.total > 0
+          ? ((this.metrics.errors.total / this.metrics.requests.total) * 100).toFixed(2) + '%'
+          : '0%',
+        by_type: this.metrics.errors.byType
+      },
+      generated_at: new Date().toISOString()
+    };
+  }
+
+  formatDuration(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days}d ${hours % 24}h ${minutes % 60}m`;
+    if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
+  }
+
+  calculatePercentiles() {
+    // Approximate percentiles based on histogram
+    const h = this.metrics.latency.histogram;
+    const total = this.metrics.latency.count;
+
+    if (total === 0) {
+      return { p50: 0, p95: 0, p99: 0 };
+    }
+
+    let cumulative = 0;
+    const findPercentile = (target) => {
+      cumulative = 0;
+      const buckets = [
+        { threshold: 100, count: h.under100 },
+        { threshold: 500, count: h.under500 },
+        { threshold: 1000, count: h.under1000 },
+        { threshold: 2000, count: h.under2000 },
+        { threshold: Infinity, count: h.over2000 }
+      ];
+
+      for (const bucket of buckets) {
+        cumulative += bucket.count;
+        if (cumulative / total >= target) {
+          return bucket.threshold === Infinity ? 2000 : bucket.threshold;
+        }
+      }
+      return 2000;
+    };
+
+    return {
+      p50: findPercentile(0.5),
+      p95: findPercentile(0.95),
+      p99: findPercentile(0.99)
     };
   }
 
