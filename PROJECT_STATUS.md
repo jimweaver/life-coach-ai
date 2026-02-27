@@ -49,15 +49,24 @@ Updated: 2026-02-27
    - KBI/intervention logic
    - Day3 multi-domain flow
    - Day4 domain coverage
+   - Scheduler runner cycle tests
    - E2E API flow (`chat -> db -> monitor/intervention`)
+
+7. **Scheduled runner (initial) added**
+   - `core/scheduler-runner.js`
+   - Monitor cycle (`runMonitorCycle`) scans users and evaluates KBI alerts
+   - Morning cycle (`runMorningCycle`) generates intervention messages
+   - API job endpoints:
+     - `POST /jobs/run-monitor-cycle`
+     - `POST /jobs/run-morning-cycle`
 
 ---
 
 ## In progress / next
 
 1. Replace current domain heuristic stubs with real model-calling adapter (OpenClaw-compatible mode)
-2. Wire `data-collector` to external source pipeline with robust citation payload
-3. Add scheduled runner for `progress-tracker` + `kbi-monitor` + `intervention`
+2. Expand data-collector citation payload (multi-source ranking + confidence)
+3. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
 4. Add production guardrails:
    - rate limit
    - request schema validation

@@ -9,6 +9,7 @@ const OrchestratorEngine = require('./orchestrator-engine');
 const DatabaseStorageManager = require('./storage/database-storage');
 const KBIMonitor = require('./kbi-monitor');
 const InterventionEngine = require('./intervention-engine');
+const SchedulerRunner = require('./scheduler-runner');
 
 async function createServer() {
   const app = express();
@@ -18,6 +19,7 @@ async function createServer() {
   const db = new DatabaseStorageManager();
   const kbiMonitor = new KBIMonitor();
   const interventionEngine = new InterventionEngine();
+  const scheduler = new SchedulerRunner(db);
 
   app.use(helmet());
   app.use(cors());
@@ -152,6 +154,26 @@ async function createServer() {
       const alerts = req.body?.alerts || [];
       const message = interventionEngine.buildRiskIntervention(alerts);
       res.json({ message, hasIntervention: !!message });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/jobs/run-monitor-cycle', async (req, res) => {
+    try {
+      const limitUsers = Number(req.body?.limitUsers || 100);
+      const result = await scheduler.runMonitorCycle({ limitUsers });
+      res.json({ ok: true, result });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/jobs/run-morning-cycle', async (req, res) => {
+    try {
+      const limitUsers = Number(req.body?.limitUsers || 100);
+      const result = await scheduler.runMorningCycle({ limitUsers });
+      res.json({ ok: true, result });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

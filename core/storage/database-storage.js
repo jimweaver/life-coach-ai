@@ -297,6 +297,37 @@ class DatabaseStorageManager {
     return result.rows;
   }
 
+  // ========== Scheduler Support ==========
+
+  async listUserIds(limit = 100) {
+    const result = await this.postgres.query(
+      `SELECT user_id FROM user_profiles ORDER BY updated_at DESC LIMIT $1`,
+      [limit]
+    );
+    return result.rows.map(r => r.user_id);
+  }
+
+  async getLatestKbiSnapshot(userId) {
+    const metrics = ['goal_adherence', 'engagement_score', 'mood_trend', 'skill_progress'];
+    const snapshot = {};
+
+    for (const metric of metrics) {
+      const result = await this.postgres.query(
+        `SELECT metric_value FROM kbi_metrics
+         WHERE user_id = $1 AND metric_name = $2
+         ORDER BY recorded_at DESC
+         LIMIT 1`,
+        [userId, metric]
+      );
+
+      if (result.rows[0]) {
+        snapshot[metric] = Number(result.rows[0].metric_value);
+      }
+    }
+
+    return snapshot;
+  }
+
   // ========== Utility Methods ==========
 
   async testConnections() {
