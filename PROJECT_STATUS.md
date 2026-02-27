@@ -255,13 +255,20 @@ Updated: 2026-02-27
    - Added verification test: `test-deploy-smoke-wrapper.js`
    - Deployment docs updated (`DEPLOYMENT_PROFILE.md`, `DEPLOYMENT_OPERATIONS.md`)
 
+33. **Alert destination governance docs added**
+   - Added runbook doc: `docs/ALERT_DESTINATION_GOVERNANCE.md`
+   - Defines owner matrix for warn/critical delivery alerts
+   - Documents escalation handling flow and response expectations
+   - Adds policy verification checklist and audit trace expectations
+   - Linked from deployment operations production gate
+
 ---
 
 ## In progress / next
 
-1. Add alert destination governance docs (operator ownership + escalation runbook)
-2. Add post-deploy canary flow (quick traffic validation + rollback decision thresholds)
-3. Add deploy-wrapper observability hooks (structured deploy-step logs + durations)
+1. Add post-deploy canary flow (quick traffic validation + rollback decision thresholds)
+2. Add deploy-wrapper observability hooks (structured deploy-step logs + durations)
+3. Add alert ownership automation hooks (sync route policy with on-call roster)
 
 ---
 

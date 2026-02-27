@@ -132,6 +132,7 @@ Wrapper flow:
 Before release, run the full readiness checklist:
 
 - `docs/PRODUCTION_READINESS_CHECKLIST.md`
+- `docs/ALERT_DESTINATION_GOVERNANCE.md` (validate routing owners + escalation targets)
 
 ---
 
