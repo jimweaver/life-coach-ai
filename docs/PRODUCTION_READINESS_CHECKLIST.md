@@ -59,6 +59,8 @@ Suggested envs:
 - [ ] Smoke checks pass:
   - `npm run smoke:check`
   - `npm run smoke:deep`
+- [ ] Canary gate pass:
+  - `npm run deploy:canary`
 
 ---
 

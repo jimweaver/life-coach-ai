@@ -8,6 +8,7 @@
 | `npm run deploy:up` | Preflight + start API |
 | `npm run deploy:smoke` | Managed smoke orchestration (start API -> quick smoke -> stop API) |
 | `npm run deploy:smoke:deep` | Managed smoke orchestration (start API -> deep smoke -> stop API) |
+| `npm run deploy:canary` | Post-deploy canary validation (traffic probe + rollback decision) |
 | `npm run smoke:check` | Post-deploy health + sanity checks |
 | `npm run smoke:deep` | Extended checks (DB, Redis, key endpoints) |
 
@@ -52,6 +53,23 @@ Wrapper flow:
 3. Wait for `/ready`
 4. Run smoke checks (`quick` or `deep`)
 5. Gracefully stop API process
+
+### Canary flow (traffic validation + rollback recommendation)
+
+```bash
+npm run deploy:canary
+```
+
+Canary executes a lightweight traffic transaction (`profile -> goals -> chat`) multiple times,
+then evaluates rollback decision thresholds.
+
+Rollback recommendation is triggered when one of these thresholds is exceeded:
+
+- `CANARY_MAX_ERROR_RATE` (default `0.2`)
+- `CANARY_P95_MAX_MS` (default `3500`)
+- `CANARY_AVG_MAX_MS` (default `2200`)
+
+The canary result is printed as JSON and exits non-zero on rollback recommendation.
 
 ---
 
@@ -124,6 +142,11 @@ Wrapper flow:
 | `SMOKE_CHECK_RETRIES` | 3 | Retry attempts for flaky checks |
 | `SMOKE_CHECK_BASE_URL` | http://localhost:8787 | API base URL |
 | `SHUTDOWN_GRACE_MS` | 10000 | Graceful shutdown wait before force-closing sockets |
+| `CANARY_REQUEST_COUNT` | 3 | Number of synthetic canary transactions |
+| `CANARY_REQUEST_TIMEOUT_MS` | 10000 | Timeout per canary transaction |
+| `CANARY_MAX_ERROR_RATE` | 0.2 | Rollback threshold for failed request ratio |
+| `CANARY_P95_MAX_MS` | 3500 | Rollback threshold for p95 latency |
+| `CANARY_AVG_MAX_MS` | 2200 | Rollback threshold for average latency |
 
 ---
 

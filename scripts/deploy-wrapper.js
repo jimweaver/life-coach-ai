@@ -110,6 +110,23 @@ function resolveSmokePlan(modeRaw) {
   throw new Error(`Unsupported smoke mode: ${modeRaw}. Use quick|deep|both`);
 }
 
+function parseCanaryMode(args) {
+  const kv = args.find((a) => a.startsWith('--canary='));
+  if (kv) return kv.split('=')[1] || 'traffic';
+
+  if (args.includes('--canary')) return 'traffic';
+  return null;
+}
+
+function resolveCanaryPlan(modeRaw) {
+  const mode = String(modeRaw || '').toLowerCase();
+
+  if (!mode) return [];
+  if (mode === 'traffic' || mode === 'quick') return ['traffic'];
+
+  throw new Error(`Unsupported canary mode: ${modeRaw}. Use traffic`);
+}
+
 async function run() {
   const args = process.argv.slice(2);
   const checkOnly = args.includes('--check-only');
@@ -119,12 +136,19 @@ async function run() {
   const smokePlan = resolveSmokePlan(smokeMode);
   const smokeEnabled = smokePlan.length > 0;
 
+  const canaryMode = parseCanaryMode(args);
+  const canaryPlan = resolveCanaryPlan(canaryMode);
+  const canaryEnabled = canaryPlan.length > 0;
+
+  const managedChecksEnabled = smokeEnabled || canaryEnabled;
+
   const profileArg = args.find((a) => a.startsWith('--profile='));
   const profilePath = profileArg ? profileArg.split('=')[1] : null;
 
   const checkScript = path.join(__dirname, 'deployment-check.js');
   const smokeQuickScript = path.join(__dirname, 'smoke-check.js');
   const smokeDeepScript = path.join(__dirname, 'smoke-check-deep.js');
+  const canaryScript = path.join(__dirname, 'canary-check.js');
   const apiScript = path.join(__dirname, '..', 'core', 'api-server.js');
 
   if (!skipCheck) {
@@ -147,9 +171,9 @@ async function run() {
 
   console.log('🚀 Starting Life Coach API...');
 
-  const { child: api, exited: apiExited } = spawnApi(apiScript);
+  const { child: api } = spawnApi(apiScript);
 
-  if (!smokeEnabled) {
+  if (!managedChecksEnabled) {
     const forward = (sig) => {
       if (!api.killed) api.kill(sig);
     };
@@ -182,28 +206,43 @@ async function run() {
     });
 
     if (!ready) {
-      console.error('❌ API did not become ready in time for smoke run.');
+      console.error('❌ API did not become ready in time for managed checks.');
       await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
       process.exit(1);
     }
 
-    console.log(`🧪 Running smoke plan: ${smokePlan.join(', ')}`);
+    if (smokeEnabled) {
+      console.log(`🧪 Running smoke plan: ${smokePlan.join(', ')}`);
 
-    for (const step of smokePlan) {
-      const script = step === 'deep' ? smokeDeepScript : smokeQuickScript;
-      const code = await runNodeScript(script);
-      if (code !== 0) {
-        console.error(`❌ Smoke step failed: ${step}`);
-        await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
-        process.exit(code);
+      for (const step of smokePlan) {
+        const script = step === 'deep' ? smokeDeepScript : smokeQuickScript;
+        const code = await runNodeScript(script);
+        if (code !== 0) {
+          console.error(`❌ Smoke step failed: ${step}`);
+          await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+          process.exit(code);
+        }
       }
     }
 
-    console.log('✅ deploy-wrapper smoke mode completed successfully.');
+    if (canaryEnabled) {
+      console.log(`🧪 Running canary plan: ${canaryPlan.join(', ')}`);
+
+      for (const step of canaryPlan) {
+        const code = await runNodeScript(canaryScript);
+        if (code !== 0) {
+          console.error(`❌ Canary step failed: ${step}`);
+          await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+          process.exit(code);
+        }
+      }
+    }
+
+    console.log('✅ deploy-wrapper managed check mode completed successfully.');
     await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
     process.exit(0);
   } catch (err) {
-    console.error('❌ deploy-wrapper smoke mode fatal:', err.message);
+    console.error('❌ deploy-wrapper managed mode fatal:', err.message);
     await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
     process.exit(1);
   }

@@ -55,6 +55,7 @@ Useful variants:
 npm run deploy:preflight               # check-only
 npm run deploy:smoke                   # managed lifecycle: start API -> run quick smoke -> stop API
 npm run deploy:smoke:deep              # managed lifecycle: start API -> run deep smoke -> stop API
+npm run deploy:canary                  # managed lifecycle: start API -> canary traffic validation -> stop API
 npm run deploy:up -- --skip-check      # start API directly (not recommended)
 npm run deploy:up -- --profile=/abs/path/to/profile.json
 ```

@@ -262,13 +262,26 @@ Updated: 2026-02-27
    - Adds policy verification checklist and audit trace expectations
    - Linked from deployment operations production gate
 
+34. **Post-deploy canary flow added (traffic validation + rollback thresholds)**
+   - Added canary validator: `scripts/canary-check.js`
+   - Added wrapper-managed canary mode: `--canary=traffic`
+   - Added command: `npm run deploy:canary`
+   - Canary now evaluates rollback recommendation by thresholds:
+     - `CANARY_MAX_ERROR_RATE`
+     - `CANARY_P95_MAX_MS`
+     - `CANARY_AVG_MAX_MS`
+   - Added coverage:
+     - `test-canary-check.js`
+     - `test-deploy-canary-wrapper.js`
+   - Updated deployment docs with canary gate
+
 ---
 
 ## In progress / next
 
-1. Add post-deploy canary flow (quick traffic validation + rollback decision thresholds)
-2. Add deploy-wrapper observability hooks (structured deploy-step logs + durations)
-3. Add alert ownership automation hooks (sync route policy with on-call roster)
+1. Add deploy-wrapper observability hooks (structured deploy-step logs + durations)
+2. Add alert ownership automation hooks (sync route policy with on-call roster)
+3. Add canary baseline profiling (auto-calibrate thresholds from historical runs)
 
 ---
 
@@ -282,6 +295,9 @@ npm run deploy:up
 # Managed smoke orchestration (start -> smoke -> stop)
 npm run deploy:smoke
 npm run deploy:smoke:deep
+
+# Managed canary orchestration (start -> canary -> stop)
+npm run deploy:canary
 
 # Smoke checks (post-deploy)
 npm run smoke:check
@@ -316,6 +332,8 @@ npm run test:alert-policy
 npm run test:inline-retry
 npm run test:deploy
 npm run test:deploy-smoke
+npm run test:deploy-canary
+npm run test:canary
 npm run test:graceful
 npm run test:e2e
 ```
