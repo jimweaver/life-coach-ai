@@ -812,13 +812,23 @@ Updated: 2026-02-27
    - Added npm script: `test:prometheus`
    - Graceful shutdown test passes
 
+85. **Grafana dashboard templates**
+   - Created 3 ready-to-use Grafana dashboard templates
+   - `dashboard-overview.json`: Key metrics at a glance (requests, latency, cache, errors)
+   - `dashboard-performance.json`: Memory and performance deep dive (heap, RSS, latency heatmap)
+   - `dashboard-integrations.json`: Model and delivery metrics (success rates, duration, failures)
+   - Created `config/grafana/README.md` with setup instructions
+   - Includes Prometheus configuration example
+   - Documents metric reference and troubleshooting
+   - All dashboards use Prometheus data source
+
 ---
 
 ## In progress / next
 
 1. Add metrics alerting thresholds configuration
-2. Create Grafana dashboard templates
-3. Add Prometheus scrape configuration example
+2. Create alerting rules for Prometheus
+3. Performance optimization review
 
 ---
 
