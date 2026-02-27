@@ -33,6 +33,7 @@ npm run test:e2e
 - [ ] Dead-letter visibility: `GET /jobs/dead-letter`
 - [ ] Replay policy visibility: `GET /jobs/dead-letter/replay-policy`
 - [ ] Data quality probe: `GET /data-quality/probe`
+- [ ] Canary drift check: `GET /jobs/canary/drift`
 
 ---
 
@@ -76,6 +77,8 @@ npm run test:retry
 npm run test:replay-safety
 npm run test:ops-policy
 npm run test:alert-policy
+npm run test:alert-drift
+npm run test:canary-drift
 npm run test:graceful
 npm run test:e2e
 ```

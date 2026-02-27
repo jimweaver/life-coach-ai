@@ -40,6 +40,7 @@
     "test:deploy-canary": "node test-deploy-canary-wrapper.js",
     "test:canary": "node test-canary-check.js",
     "test:canary-profile": "node test-canary-profile.js",
+    "test:canary-drift": "node test-canary-drift-alert.js",
     "test:graceful": "node test-graceful-shutdown.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",

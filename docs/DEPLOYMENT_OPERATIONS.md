@@ -87,6 +87,28 @@ This returns a baseline profile with suggested values for:
 
 Use it to tune canary thresholds over time instead of static defaults.
 
+### Canary profile drift alarms
+
+Detect when active canary thresholds drift too far from history-derived baseline:
+
+- Endpoint: `GET /jobs/canary/drift`
+- Optional params:
+  - `minSamples=<int>`
+  - `route=true|false`
+  - `emitAudit=true|false`
+  - `historyFile=/abs/path/history.jsonl`
+
+Routing behavior:
+- Controlled by `CANARY_DRIFT_ROUTE_ENABLED` (default: `true`)
+- Minimum routed severity controlled by `CANARY_DRIFT_ROUTE_MIN_LEVEL` (`warn|critical`)
+
+Drift thresholds:
+- `CANARY_DRIFT_WARN_RATIO` (default: `0.25`)
+- `CANARY_DRIFT_CRITICAL_RATIO` (default: `0.5`)
+
+Audit signal:
+- `agent_logs.action = canary_profile_drift_detected`
+
 ### Deploy-wrapper observability hooks
 
 Set `DEPLOY_WRAPPER_LOG_FORMAT=json` to emit structured JSON events with step durations.
@@ -206,6 +228,10 @@ npm run test:deploy-sink
 | `CANARY_PROFILE_MIN_SAMPLES` | 5 | Minimum history samples for baseline profile |
 | `CANARY_PROFILE_ERROR_HEADROOM` | 0.02 | Error-rate buffer for suggested threshold |
 | `CANARY_PROFILE_LATENCY_MULTIPLIER` | 1.2 | Latency multiplier for suggested thresholds |
+| `CANARY_DRIFT_WARN_RATIO` | 0.25 | Warn threshold for active-vs-suggested ratio delta |
+| `CANARY_DRIFT_CRITICAL_RATIO` | 0.5 | Critical threshold for active-vs-suggested ratio delta |
+| `CANARY_DRIFT_ROUTE_ENABLED` | true | Enable routing when canary drift is detected |
+| `CANARY_DRIFT_ROUTE_MIN_LEVEL` | warn | Minimum drift level routed via alert router |
 | `DEPLOY_WRAPPER_LOG_FORMAT` | text | Wrapper log format (`text` or `json`) |
 | `DEPLOY_WRAPPER_READY_TIMEOUT_MS` | 20000 | Max wait for `/ready` in managed modes |
 | `DEPLOY_WRAPPER_READY_INTERVAL_MS` | 500 | Poll interval for `/ready` |

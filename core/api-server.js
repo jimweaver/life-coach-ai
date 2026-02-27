@@ -13,6 +13,12 @@ const SchedulerRunner = require('./scheduler-runner');
 const DataCollector = require('./data-collector');
 const AlertRouter = require('./alert-router');
 const AlertOwnershipDriftDetector = require('./alert-ownership-drift');
+const CanaryDriftDetector = require('./canary-drift-detector');
+const {
+  resolveHistoryFile,
+  loadHistory,
+  computeSuggestedThresholds
+} = require('../scripts/canary-check');
 const {
   isUuid,
   createRateLimiter,
@@ -40,6 +46,7 @@ async function createServer() {
     delivery: scheduler?.delivery
   });
   const ownershipDriftDetector = new AlertOwnershipDriftDetector();
+  const canaryDriftDetector = new CanaryDriftDetector();
 
   app.use(helmet());
   app.use(cors());
@@ -290,6 +297,14 @@ async function createServer() {
         owner_drift_warn_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_WARN_STALE_MINUTES || 120),
         owner_drift_critical_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_CRITICAL_STALE_MINUTES || 360),
         owner_drift_strict: String(process.env.ALERT_OWNER_DRIFT_STRICT || 'false').toLowerCase() === 'true'
+      },
+      canary_drift_policy: {
+        route_enabled: String(process.env.CANARY_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+        route_min_level: String(process.env.CANARY_DRIFT_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
+        warn_ratio: Number(process.env.CANARY_DRIFT_WARN_RATIO || 0.25),
+        critical_ratio: Number(process.env.CANARY_DRIFT_CRITICAL_RATIO || 0.5),
+        profile_min_samples: Number(process.env.CANARY_PROFILE_MIN_SAMPLES || 5),
+        history_file: resolveHistoryFile()
       },
       time: new Date().toISOString()
     });
@@ -669,6 +684,116 @@ async function createServer() {
 
       res.json({
         ...result,
+        routed
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/canary/drift', async (req, res) => {
+    try {
+      const historyFile = req.query.historyFile
+        ? String(req.query.historyFile)
+        : undefined;
+
+      const minSamples = Number(req.query.minSamples || process.env.CANARY_PROFILE_MIN_SAMPLES || 5);
+      if (!Number.isInteger(minSamples) || minSamples < 1 || minSamples > 100000) {
+        return badRequest(res, ['minSamples must be an integer between 1 and 100000']);
+      }
+
+      const routeEnabled = req.query.route === undefined
+        ? String(process.env.CANARY_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false'
+        : String(req.query.route).toLowerCase() !== 'false';
+
+      const emitAudit = req.query.emitAudit === undefined
+        ? true
+        : String(req.query.emitAudit).toLowerCase() !== 'false';
+
+      const routeMinLevel = String(process.env.CANARY_DRIFT_ROUTE_MIN_LEVEL || 'warn').toLowerCase();
+      const levelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+
+      const resolvedHistoryFile = resolveHistoryFile({ historyFile });
+      const history = await loadHistory(resolvedHistoryFile);
+      const profile = computeSuggestedThresholds(history, { minSamples });
+
+      const activeThresholds = {
+        max_error_rate: Number(process.env.CANARY_MAX_ERROR_RATE ?? 0.2),
+        max_p95_ms: Number(process.env.CANARY_P95_MAX_MS ?? 3500),
+        max_avg_ms: Number(process.env.CANARY_AVG_MAX_MS ?? 2200)
+      };
+
+      const drift = canaryDriftDetector.evaluate({
+        profile,
+        activeThresholds,
+        historyCount: history.length,
+        historyFile: resolvedHistoryFile
+      });
+
+      let routed = null;
+      const shouldRoute = routeEnabled
+        && drift.should_notify
+        && (levelRank[drift.level] || 1) >= (levelRank[routeMinLevel] || 2);
+
+      if (shouldRoute) {
+        const alert = {
+          level: drift.level,
+          should_notify: true,
+          reasons: ['canary_profile_drift_detected', ...drift.reasons],
+          metrics: {
+            log: {
+              window_minutes: null,
+              failure_rate: null
+            },
+            outbox: {
+              recent: {
+                dead_letter: null
+              }
+            }
+          },
+          trend: {
+            dead_letter_total: null,
+            growth_streak: null
+          }
+        };
+
+        routed = await alertRouter.routeDeliveryAlert(alert);
+      }
+
+      if (emitAudit && drift.drift_detected) {
+        try {
+          await db.logAgentAction(
+            'canary-monitor',
+            null,
+            null,
+            'canary_profile_drift_detected',
+            null,
+            'success',
+            null,
+            {
+              drift,
+              active_thresholds: activeThresholds,
+              route_enabled: routeEnabled,
+              route_min_level: routeMinLevel,
+              routed
+            }
+          );
+        } catch (_e) {
+          // best effort
+        }
+      }
+
+      res.json({
+        ok: true,
+        history_file: resolvedHistoryFile,
+        history_count: history.length,
+        profile,
+        drift,
+        route: {
+          enabled: routeEnabled,
+          min_level: routeMinLevel,
+          attempted: !!shouldRoute
+        },
         routed
       });
     } catch (err) {

@@ -319,13 +319,22 @@ Updated: 2026-02-27
    - Added coverage: `test-alert-ownership-drift.js`
    - Governance docs updated with drift gate + verification flow
 
+40. **Canary profile drift alarms added (baseline shift notification)**
+   - Added drift detector: `core/canary-drift-detector.js`
+   - New API endpoint: `GET /jobs/canary/drift`
+   - Drift compares active canary thresholds vs history-derived suggested thresholds
+   - Supports auto-routing via alert router (`CANARY_DRIFT_ROUTE_ENABLED`, `CANARY_DRIFT_ROUTE_MIN_LEVEL`)
+   - Emits audit signal: `canary_profile_drift_detected`
+   - Added coverage: `test-canary-drift-alert.js`
+   - Deployment/readiness docs updated with canary drift gate
+
 ---
 
 ## In progress / next
 
-1. Add canary profile drift alarms (auto-notify when baseline shifts beyond tolerance)
-2. Add deploy event analytics endpoint (query deploy_run_events by run/time/event)
-3. Add ownership drift alert routing (auto-escalate when drift level is critical)
+1. Add deploy event analytics endpoint (query deploy_run_events by run/time/event)
+2. Add ownership drift alert routing (auto-escalate when drift level is critical)
+3. Add canary drift trend endpoint (windowed drift severity over recent history)
 
 ---
 
@@ -384,6 +393,7 @@ npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary
 npm run test:canary-profile
+npm run test:canary-drift
 npm run test:graceful
 npm run test:e2e
 ```
