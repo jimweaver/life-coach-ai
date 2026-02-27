@@ -238,13 +238,21 @@ Updated: 2026-02-27
    - `/health` now exposes expanded `delivery_alert_policy` snapshot
    - Added coverage: `test-alert-routing-policy.js`
 
+31. **Production readiness checklist + graceful shutdown hardening added**
+   - Added readiness endpoint: `GET /ready`
+   - `/health` now exposes readiness block (`accepting_traffic`, `active_requests`, `shutdown_grace_ms`)
+   - Added request draining + idempotent shutdown guard in `core/api-server.js`
+   - Added graceful shutdown test: `test-graceful-shutdown.js`
+   - Added checklist doc: `docs/PRODUCTION_READINESS_CHECKLIST.md`
+   - Updated deployment ops doc with shutdown gate references
+
 ---
 
 ## In progress / next
 
-1. Add production readiness checklist (observability + graceful shutdown hardening)
-2. Add deployment smoke orchestration mode (run checks against managed process lifecycle)
-3. Add alert destination governance docs (operator ownership + escalation runbook)
+1. Add deployment smoke orchestration mode (run checks against managed process lifecycle)
+2. Add alert destination governance docs (operator ownership + escalation runbook)
+3. Add post-deploy canary flow (quick traffic validation + rollback decision thresholds)
 
 ---
 
@@ -287,5 +295,6 @@ npm run test:alert-routing
 npm run test:alert-policy
 npm run test:inline-retry
 npm run test:deploy
+npm run test:graceful
 npm run test:e2e
 ```

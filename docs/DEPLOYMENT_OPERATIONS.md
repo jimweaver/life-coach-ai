@@ -107,6 +107,15 @@ Verifies:
 | `SMOKE_CHECK_TIMEOUT_MS` | 5000 | Health endpoint timeout |
 | `SMOKE_CHECK_RETRIES` | 3 | Retry attempts for flaky checks |
 | `SMOKE_CHECK_BASE_URL` | http://localhost:8787 | API base URL |
+| `SHUTDOWN_GRACE_MS` | 10000 | Graceful shutdown wait before force-closing sockets |
+
+---
+
+## Production gate
+
+Before release, run the full readiness checklist:
+
+- `docs/PRODUCTION_READINESS_CHECKLIST.md`
 
 ---
 

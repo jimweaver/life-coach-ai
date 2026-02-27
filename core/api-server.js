@@ -44,6 +44,36 @@ async function createServer() {
   app.use(express.json({ limit: '1mb' }));
   app.use(morgan('dev'));
 
+  const gracefulShutdownMs = Number(process.env.SHUTDOWN_GRACE_MS || 10_000);
+  const readinessStartedAt = new Date().toISOString();
+  let isShuttingDown = false;
+  let activeRequests = 0;
+  let shutdownPromise = null;
+
+  app.use((req, res, next) => {
+    if (isShuttingDown && req.path !== '/health' && req.path !== '/ready') {
+      res.set('Retry-After', '5');
+      return res.status(503).json({
+        error: 'server_shutting_down',
+        message: 'Server is shutting down. Please retry shortly.'
+      });
+    }
+
+    activeRequests += 1;
+    let settled = false;
+
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      activeRequests = Math.max(0, activeRequests - 1);
+    };
+
+    res.on('finish', settle);
+    res.on('close', settle);
+
+    next();
+  });
+
   const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
   const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || 120);
   const rateLimitBackend = String(process.env.RATE_LIMIT_BACKEND || 'redis').toLowerCase();
@@ -221,6 +251,12 @@ async function createServer() {
     res.json({
       ok: status.redis && status.postgres,
       services: status,
+      readiness: {
+        accepting_traffic: !isShuttingDown,
+        active_requests: activeRequests,
+        shutdown_grace_ms: gracefulShutdownMs,
+        started_at: readinessStartedAt
+      },
       rate_limit_backend: rateLimitBackend,
       rate_limit_policy: rateLimitPolicy,
       cron_delivery_mode: cronDeliveryMode,
@@ -248,6 +284,24 @@ async function createServer() {
         escalation_channel: process.env.DELIVERY_ALERT_ESCALATION_CHANNEL || (process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event')
       },
       time: new Date().toISOString()
+    });
+  });
+
+  app.get('/ready', (_req, res) => {
+    if (isShuttingDown) {
+      return res.status(503).json({
+        ok: false,
+        accepting_traffic: false,
+        active_requests: activeRequests,
+        reason: 'server_shutting_down'
+      });
+    }
+
+    return res.json({
+      ok: true,
+      accepting_traffic: true,
+      active_requests: activeRequests,
+      started_at: readinessStartedAt
     });
   });
 
@@ -875,10 +929,54 @@ async function createServer() {
     console.log(`🚀 Life Coach API running at http://localhost:${port}`);
   });
 
+  const sockets = new Set();
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+
+  const forceCloseSockets = () => {
+    for (const socket of sockets) {
+      try {
+        socket.destroy();
+      } catch (_e) {
+        // best effort
+      }
+    }
+  };
+
+  const closeServerGracefully = async () => {
+    await new Promise((resolve) => {
+      let resolved = false;
+
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+
+      server.close(done);
+      setTimeout(() => {
+        forceCloseSockets();
+        done();
+      }, gracefulShutdownMs);
+    });
+  };
+
   const shutdown = async ({ exit = false } = {}) => {
-    await new Promise((resolve) => server.close(resolve));
-    await engine.close();
-    await db.close();
+    if (!shutdownPromise) {
+      shutdownPromise = (async () => {
+        isShuttingDown = true;
+
+        await closeServerGracefully();
+        await Promise.allSettled([
+          Promise.resolve().then(() => engine.close()),
+          Promise.resolve().then(() => db.close())
+        ]);
+      })();
+    }
+
+    await shutdownPromise;
     if (exit) process.exit(0);
   };
 
