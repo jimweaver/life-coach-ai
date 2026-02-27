@@ -211,6 +211,49 @@ async function createServer() {
     next();
   });
 
+  // Request latency tracking
+  const latencyHistogram = {
+    under10: 0,    // <10ms
+    under50: 0,    // 10-50ms
+    under100: 0,   // 50-100ms
+    under250: 0,   // 100-250ms
+    under500: 0,   // 250-500ms
+    under1000: 0,  // 500-1000ms
+    under2000: 0,  // 1-2s
+    over2000: 0    // >2s
+  };
+  const routeLatencies = {}; // Per-route tracking
+
+  app.use((req, res, next) => {
+    const start = Date.now();
+    const route = req.route?.path || req.path;
+
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      const status = res.statusCode;
+
+      // Update histogram
+      if (duration < 10) latencyHistogram.under10++;
+      else if (duration < 50) latencyHistogram.under50++;
+      else if (duration < 100) latencyHistogram.under100++;
+      else if (duration < 250) latencyHistogram.under250++;
+      else if (duration < 500) latencyHistogram.under500++;
+      else if (duration < 1000) latencyHistogram.under1000++;
+      else if (duration < 2000) latencyHistogram.under2000++;
+      else latencyHistogram.over2000++;
+
+      // Update per-route stats
+      if (!routeLatencies[route]) {
+        routeLatencies[route] = { count: 0, totalMs: 0, errors: 0 };
+      }
+      routeLatencies[route].count++;
+      routeLatencies[route].totalMs += duration;
+      if (status >= 400) routeLatencies[route].errors++;
+    });
+
+    next();
+  });
+
   const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
   const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || 120);
   const rateLimitBackend = String(process.env.RATE_LIMIT_BACKEND || 'redis').toLowerCase();
@@ -1359,6 +1402,35 @@ async function createServer() {
       });
     } catch (err) {
       console.error('[Orchestrator Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
+  // API latency histogram endpoint
+  app.get('/metrics/latency', (_req, res) => {
+    try {
+      const totalRequests = Object.values(latencyHistogram).reduce((a, b) => a + b, 0);
+      
+      // Calculate per-route averages
+      const routeStats = Object.entries(routeLatencies).map(([route, stats]) => ({
+        route,
+        count: stats.count,
+        avg_ms: Math.round(stats.totalMs / stats.count),
+        error_rate: ((stats.errors / stats.count) * 100).toFixed(2) + '%'
+      })).sort((a, b) => b.count - a.count);
+
+      res.json({
+        ok: true,
+        histogram: latencyHistogram,
+        total_requests: totalRequests,
+        routes: routeStats.slice(0, 20), // Top 20 routes
+        generated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('[Latency Metrics] Error:', err);
       res.status(500).json({
         ok: false,
         error: err.message

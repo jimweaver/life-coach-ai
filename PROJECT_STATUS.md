@@ -676,13 +676,23 @@ Updated: 2026-02-27
    - Added npm script: `test:orchestrator-metrics`
    - Graceful shutdown test passes
 
+73. **API request latency histogram metrics**
+   - Added request latency tracking middleware to API server
+   - Tracks 8 latency buckets: under10, under50, under100, under250, under500, under1000, under2000, over2000 (ms)
+   - Tracks per-route stats: count, avg_ms, error_rate
+   - Added `GET /metrics/latency` endpoint
+   - Returns histogram, total_requests, top 20 routes by volume
+   - Added test: `test-latency-metrics.js`
+   - Added npm script: `test:latency-metrics`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add API request latency histogram metrics
-2. Add database query performance tracking
-3. Add deploy trend telemetry rollup for trend dashboards
+1. Add database query performance tracking
+2. Add deploy trend telemetry rollup for trend dashboards
+3. Add API response size metrics
 
 ---
 
