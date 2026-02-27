@@ -69,6 +69,16 @@ class DatabaseStorageManager {
       queryTypes: {} // Group by query type
     };
 
+    // Cache hit/miss tracking
+    this.cacheStats = {
+      hits: 0,
+      misses: 0,
+      sets: 0,
+      deletes: 0,
+      errors: 0,
+      keyPatterns: {} // Track by key pattern
+    };
+
     // Wrap query method for performance tracking
     this.originalQuery = this.postgres.query.bind(this.postgres);
     this.postgres.query = this.trackedQuery.bind(this);
@@ -165,27 +175,116 @@ class DatabaseStorageManager {
     };
   }
 
+  // Cache tracking helpers
+  recordCacheHit(key) {
+    this.cacheStats.hits++;
+    this.recordKeyPattern(key, 'hit');
+  }
+
+  recordCacheMiss(key) {
+    this.cacheStats.misses++;
+    this.recordKeyPattern(key, 'miss');
+  }
+
+  recordCacheSet(key) {
+    this.cacheStats.sets++;
+    this.recordKeyPattern(key, 'set');
+  }
+
+  recordCacheDelete(key) {
+    this.cacheStats.deletes++;
+    this.recordKeyPattern(key, 'delete');
+  }
+
+  recordCacheError(key) {
+    this.cacheStats.errors++;
+    this.recordKeyPattern(key, 'error');
+  }
+
+  recordKeyPattern(key, operation) {
+    // Extract pattern (e.g., "session:*" -> "session")
+    const pattern = key?.split(':')[0] || 'unknown';
+    if (!this.cacheStats.keyPatterns[pattern]) {
+      this.cacheStats.keyPatterns[pattern] = { hits: 0, misses: 0, sets: 0, deletes: 0, errors: 0 };
+    }
+    if (operation === 'hit') this.cacheStats.keyPatterns[pattern].hits++;
+    if (operation === 'miss') this.cacheStats.keyPatterns[pattern].misses++;
+    if (operation === 'set') this.cacheStats.keyPatterns[pattern].sets++;
+    if (operation === 'delete') this.cacheStats.keyPatterns[pattern].deletes++;
+    if (operation === 'error') this.cacheStats.keyPatterns[pattern].errors++;
+  }
+
+  getCacheMetrics() {
+    const total = this.cacheStats.hits + this.cacheStats.misses;
+    return {
+      hits: this.cacheStats.hits,
+      misses: this.cacheStats.misses,
+      sets: this.cacheStats.sets,
+      deletes: this.cacheStats.deletes,
+      errors: this.cacheStats.errors,
+      hit_rate: total > 0 ? ((this.cacheStats.hits / total) * 100).toFixed(2) + '%' : '0%',
+      miss_rate: total > 0 ? ((this.cacheStats.misses / total) * 100).toFixed(2) + '%' : '0%',
+      total_operations: this.cacheStats.hits + this.cacheStats.misses + this.cacheStats.sets + this.cacheStats.deletes,
+      key_patterns: Object.entries(this.cacheStats.keyPatterns).map(([pattern, stats]) => ({
+        pattern,
+        hits: stats.hits,
+        misses: stats.misses,
+        hit_rate: (stats.hits + stats.misses) > 0
+          ? ((stats.hits / (stats.hits + stats.misses)) * 100).toFixed(2) + '%'
+          : '0%'
+      })).sort((a, b) => (b.hits + b.misses) - (a.hits + a.misses)),
+      generated_at: new Date().toISOString()
+    };
+  }
+
   // ========== STM (Short Term Memory) - Redis ==========
 
   async getSession(sessionId) {
-    const data = await this.redis.get(`session:${sessionId}`);
-    return data ? JSON.parse(data) : null;
+    try {
+      const data = await this.redis.get(`session:${sessionId}`);
+      if (data) {
+        this.recordCacheHit(`session:${sessionId}`);
+        return JSON.parse(data);
+      }
+      this.recordCacheMiss(`session:${sessionId}`);
+      return null;
+    } catch (err) {
+      this.recordCacheError(`session:${sessionId}`);
+      throw err;
+    }
   }
 
   async setSession(sessionId, data, ttlSeconds = 86400) {
-    await this.redis.setex(
-      `session:${sessionId}`,
-      ttlSeconds,
-      JSON.stringify(data)
-    );
+    try {
+      await this.redis.setex(
+        `session:${sessionId}`,
+        ttlSeconds,
+        JSON.stringify(data)
+      );
+      this.recordCacheSet(`session:${sessionId}`);
+    } catch (err) {
+      this.recordCacheError(`session:${sessionId}`);
+      throw err;
+    }
   }
 
   async deleteSession(sessionId) {
-    await this.redis.del(`session:${sessionId}`);
+    try {
+      await this.redis.del(`session:${sessionId}`);
+      this.recordCacheDelete(`session:${sessionId}`);
+    } catch (err) {
+      this.recordCacheError(`session:${sessionId}`);
+      throw err;
+    }
   }
 
   async extendSessionTTL(sessionId, ttlSeconds = 86400) {
-    await this.redis.expire(`session:${sessionId}`, ttlSeconds);
+    try {
+      await this.redis.expire(`session:${sessionId}`, ttlSeconds);
+    } catch (err) {
+      this.recordCacheError(`session:${sessionId}`);
+      throw err;
+    }
   }
 
   // ========== MTM (Medium Term Memory) - PostgreSQL ==========

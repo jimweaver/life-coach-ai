@@ -730,13 +730,25 @@ Updated: 2026-02-27
    - Added npm script: `test:response-size`
    - Graceful shutdown test passes
 
+78. **Cache hit/miss rate tracking**
+   - Added cache statistics tracking to `DatabaseStorageManager`
+   - Tracks: hits, misses, sets, deletes, errors
+   - Tracks hit/miss by key pattern (e.g., "session:*", "rate-limit:*")
+   - Updated Redis operations (getSession, setSession, deleteSession) to track metrics
+   - Added `GET /metrics/cache` endpoint
+   - Returns: hit_rate, miss_rate, total_operations, key pattern breakdown
+   - Integrated cache stats into `/metrics/dashboard` endpoint
+   - Added test: `test-cache-metrics.js`
+   - Added npm script: `test:cache`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add cache hit/miss rate tracking
-2. Add webhook delivery success rate tracking
-3. Add model call latency tracking
+1. Add webhook delivery success rate tracking
+2. Add model call latency tracking
+3. Add memory usage metrics
 
 ---
 

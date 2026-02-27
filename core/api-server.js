@@ -1525,6 +1525,23 @@ async function createServer() {
     }
   });
 
+  // Cache hit/miss rate metrics endpoint
+  app.get('/metrics/cache', (_req, res) => {
+    try {
+      const metrics = db.getCacheMetrics();
+      res.json({
+        ok: true,
+        ...metrics
+      });
+    } catch (err) {
+      console.error('[Cache Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   // Database query performance metrics endpoint
   app.get('/metrics/queries', (_req, res) => {
     try {
@@ -1548,11 +1565,13 @@ async function createServer() {
       const [
         orchestratorMetrics,
         poolMetrics,
-        queryMetrics
+        queryMetrics,
+        cacheMetrics
       ] = await Promise.all([
         Promise.resolve().then(() => engine.getMetrics()),
         Promise.resolve().then(() => db.getPoolMetrics()),
-        Promise.resolve().then(() => db.getQueryMetrics())
+        Promise.resolve().then(() => db.getQueryMetrics()),
+        Promise.resolve().then(() => db.getCacheMetrics())
       ]);
 
       const totalRequests = Object.values(latencyHistogram).reduce((a, b) => a + b, 0);
@@ -1577,12 +1596,18 @@ async function createServer() {
             avg_kb_per_response: totalResponses > 0
               ? Math.round((totalResponseBytes / totalResponses / 1024) * 100) / 100
               : 0
+          },
+          cache_stats: {
+            hit_rate: cacheMetrics.hit_rate,
+            total_ops: cacheMetrics.total_operations,
+            top_pattern: cacheMetrics.key_patterns[0]?.pattern || 'none'
           }
         },
         services: {
           orchestrator: orchestratorMetrics,
           pools: poolMetrics,
           queries: queryMetrics,
+          cache: cacheMetrics,
           latency: {
             histogram: latencyHistogram,
             total_requests: totalRequests
