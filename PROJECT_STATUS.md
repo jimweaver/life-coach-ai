@@ -454,12 +454,22 @@ Updated: 2026-02-27
    - Added npm script: `test:canary-drift-suppression-observability`
    - Deployment ops docs updated with suppression observability usage + validation commands
 
+53. **Deploy trend routing telemetry instrumentation added (dashboard + API)**
+   - Added DB helper: `getDeployTrendAnomalyTelemetry(...)`
+   - Added endpoint: `GET /jobs/deploy-events/anomalies/telemetry`
+   - Telemetry aggregates anomaly routing signals: `detected`, `suppressed`, `route_attempted`, `route_delivered`, `route_failed`
+   - Supports scoped filters: `runId`, `source`, `sinceMinutes`, `limit`
+   - `GET /jobs/deploy-events/dashboard` now supports `includeTelemetry=true|false` and returns `anomaly_telemetry`
+   - Added coverage: `test-deploy-trend-telemetry.js`
+   - Added npm script: `test:deploy-telemetry`
+   - Deployment ops + readiness docs updated with telemetry endpoint/test gates
+
 ---
 
 ## In progress / next
 
 1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Expand deploy event analytics instrumentation (trend + dashboard) for anomaly visibility and routing telemetry
+2. Extend deploy anomaly telemetry with time-bucketed trend rollups (suppression/route_attempt/delivered)
 3. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
@@ -520,6 +530,7 @@ npm run test:deploy-sink
 npm run test:deploy-analytics
 npm run test:deploy-trend
 npm run test:deploy-anomaly
+npm run test:deploy-telemetry
 npm run test:deploy-suppression
 npm run test:deploy-dashboard
 npm run test:deploy-smoke

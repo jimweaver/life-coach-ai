@@ -1480,6 +1480,51 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/deploy-events/anomalies/telemetry', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const limit = Number(req.query.limit || 5000);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20000) {
+        return badRequest(res, ['limit must be an integer between 1 and 20000']);
+      }
+
+      const telemetry = await db.getDeployTrendAnomalyTelemetry({
+        sinceMinutes,
+        runId,
+        source,
+        limit
+      });
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          limit
+        },
+        telemetry
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/jobs/deploy-events/anomalies', async (req, res) => {
     try {
       const runId = req.query.runId ? String(req.query.runId).trim() : null;
@@ -1811,6 +1856,9 @@ async function createServer() {
       const runLimit = Number(req.query.runLimit || 20);
       const timelineLimit = Number(req.query.timelineLimit || 1000);
       const heatmapLimit = Number(req.query.heatmapLimit || 500);
+      const includeTelemetry = req.query.includeTelemetry === undefined
+        ? true
+        : String(req.query.includeTelemetry).toLowerCase() !== 'false';
 
       if (runId && !isUuid(runId)) {
         return badRequest(res, ['runId must be a valid UUID']);
@@ -1840,7 +1888,7 @@ async function createServer() {
         return badRequest(res, ['heatmapLimit must be an integer between 1 and 2000']);
       }
 
-      const [timeline, heatmapRows, summary] = await Promise.all([
+      const [timeline, heatmapRows, summary, anomalyTelemetry] = await Promise.all([
         db.getDeployEventTimeline({
           sinceMinutes,
           bucketMinutes,
@@ -1857,7 +1905,15 @@ async function createServer() {
         db.summarizeDeployRunEvents({
           sinceMinutes,
           runId
-        })
+        }),
+        includeTelemetry
+          ? db.getDeployTrendAnomalyTelemetry({
+            sinceMinutes,
+            runId,
+            source,
+            limit: 5000
+          })
+          : Promise.resolve(null)
       ]);
 
       const heatmapTotals = heatmapRows.reduce((acc, row) => {
@@ -1876,7 +1932,8 @@ async function createServer() {
           bucketMinutes,
           runLimit,
           timelineLimit,
-          heatmapLimit
+          heatmapLimit,
+          includeTelemetry
         },
         timeline,
         heatmap: {
@@ -1884,6 +1941,7 @@ async function createServer() {
           totals: heatmapTotals,
           peak_event: heatmapRows[0]?.event || null
         },
+        anomaly_telemetry: anomalyTelemetry,
         summary
       });
     } catch (err) {

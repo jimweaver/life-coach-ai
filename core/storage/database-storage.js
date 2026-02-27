@@ -648,6 +648,99 @@ class DatabaseStorageManager {
     return metrics;
   }
 
+  async getDeployTrendAnomalyTelemetry({
+    sinceMinutes = 240,
+    runId = null,
+    source = null,
+    limit = 5000
+  } = {}) {
+    const result = await this.postgres.query(
+      `SELECT agent_id, action, status, metadata, timestamp
+       FROM agent_logs
+       WHERE action IN ('deploy_trend_anomaly_detected', 'deploy_trend_anomaly_route_suppressed', 'deploy_trend_anomaly_routed')
+         AND timestamp >= NOW() - ($1 * INTERVAL '1 minute')
+       ORDER BY timestamp DESC
+       LIMIT $2`,
+      [sinceMinutes, limit]
+    );
+
+    const metrics = {
+      window_minutes: sinceMinutes,
+      sample_size: 0,
+      detected: 0,
+      suppressed: 0,
+      route_attempted: 0,
+      route_delivered: 0,
+      route_failed: 0,
+      last_detected_at: null,
+      last_suppressed_at: null,
+      last_route_attempt_at: null,
+      filters: {
+        run_id: runId || null,
+        source: source || null
+      }
+    };
+
+    const matchesScope = (row) => {
+      const filters = row.action === 'deploy_trend_anomaly_routed'
+        ? row.metadata?.metadata?.filters
+        : row.metadata?.filters;
+
+      if (runId && String(filters?.runId || '') !== String(runId)) {
+        return false;
+      }
+
+      if (source && String(filters?.source || '') !== String(source)) {
+        return false;
+      }
+
+      return true;
+    };
+
+    for (const row of result.rows) {
+      if (!matchesScope(row)) continue;
+
+      metrics.sample_size += 1;
+
+      if (row.action === 'deploy_trend_anomaly_detected') {
+        metrics.detected += 1;
+        if (!metrics.last_detected_at || row.timestamp > metrics.last_detected_at) {
+          metrics.last_detected_at = row.timestamp;
+        }
+      }
+
+      if (row.action === 'deploy_trend_anomaly_route_suppressed') {
+        metrics.suppressed += 1;
+        if (!metrics.last_suppressed_at || row.timestamp > metrics.last_suppressed_at) {
+          metrics.last_suppressed_at = row.timestamp;
+        }
+      }
+
+      if (row.action === 'deploy_trend_anomaly_routed') {
+        metrics.route_attempted += 1;
+        if (!metrics.last_route_attempt_at || row.timestamp > metrics.last_route_attempt_at) {
+          metrics.last_route_attempt_at = row.timestamp;
+        }
+
+        if (String(row.status || '').toLowerCase() === 'success') {
+          metrics.route_delivered += 1;
+        } else {
+          metrics.route_failed += 1;
+        }
+      }
+    }
+
+    metrics.suppression_rate = metrics.detected > 0
+      ? Number((metrics.suppressed / metrics.detected).toFixed(4))
+      : 0;
+
+    metrics.route_attempt_rate = metrics.detected > 0
+      ? Number((metrics.route_attempted / metrics.detected).toFixed(4))
+      : 0;
+
+    return metrics;
+  }
+
   // ========== Deploy Run Event Analytics ==========
 
   async ensureDeployRunEventsTable() {
