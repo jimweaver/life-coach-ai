@@ -3785,6 +3785,111 @@ async function createServer() {
     }
   });
 
+  // Deploy trend telemetry rollup for trend dashboards
+  app.get('/jobs/deploy-events/trend/rollup', async (req, res) => {
+    try {
+      const sinceMinutes = Number(req.query.sinceMinutes || 1440); // Default 24 hours
+      const bucketMinutes = Number(req.query.bucketMinutes || 60); // Default 1 hour buckets
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      // Fetch trend data
+      const [timeline, anomalyTrend, summary] = await Promise.all([
+        db.getDeployEventTimeline({
+          sinceMinutes,
+          bucketMinutes,
+          runId,
+          source,
+          limit: 1000
+        }),
+        db.getDeployTrendAnomalyTelemetryTrend({
+          sinceMinutes,
+          bucketMinutes,
+          runId,
+          source,
+          limit: 5000,
+          bucketLimit: 500
+        }),
+        db.summarizeDeployRunEvents({ sinceMinutes, runId })
+      ]);
+
+      // Calculate rollup statistics
+      const rollup = {
+        total_buckets: timeline.length,
+        total_events: timeline.reduce((sum, b) => sum + (b.total_events || 0), 0),
+        total_errors: timeline.reduce((sum, b) => sum + (b.error_events || 0), 0),
+        total_warns: timeline.reduce((sum, b) => sum + (b.warn_events || 0), 0),
+        avg_events_per_bucket: timeline.length > 0
+          ? Math.round(timeline.reduce((sum, b) => sum + (b.total_events || 0), 0) / timeline.length)
+          : 0,
+        error_rate: timeline.length > 0
+          ? ((timeline.reduce((sum, b) => sum + (b.error_events || 0), 0) /
+              timeline.reduce((sum, b) => sum + (b.total_events || 0), 0)) * 100).toFixed(2) + '%'
+          : '0%'
+      };
+
+      // Find peak bucket
+      const peakBucket = timeline.length > 0
+        ? timeline.reduce((max, b) => (b.total_events > max.total_events ? b : max), timeline[0])
+        : null;
+
+      // Calculate trend direction (comparing first half to second half)
+      const halfIndex = Math.floor(timeline.length / 2);
+      const firstHalf = timeline.slice(0, halfIndex);
+      const secondHalf = timeline.slice(halfIndex);
+      const firstHalfAvg = firstHalf.length > 0
+        ? firstHalf.reduce((sum, b) => sum + (b.total_events || 0), 0) / firstHalf.length
+        : 0;
+      const secondHalfAvg = secondHalf.length > 0
+        ? secondHalf.reduce((sum, b) => sum + (b.total_events || 0), 0) / secondHalf.length
+        : 0;
+      const trendDirection = secondHalfAvg > firstHalfAvg * 1.1
+        ? 'increasing'
+        : secondHalfAvg < firstHalfAvg * 0.9
+          ? 'decreasing'
+          : 'stable';
+
+      res.json({
+        ok: true,
+        filters: { sinceMinutes, bucketMinutes, runId, source },
+        rollup: {
+          ...rollup,
+          peak_bucket: peakBucket ? {
+            time: peakBucket.bucket_start,
+            total_events: peakBucket.total_events,
+            error_events: peakBucket.error_events
+          } : null,
+          trend_direction: trendDirection,
+          first_half_avg: Math.round(firstHalfAvg),
+          second_half_avg: Math.round(secondHalfAvg)
+        },
+        timeline: timeline.slice(0, 50), // Limit timeline in rollup
+        anomaly_trend: anomalyTrend?.slice(0, 50) || [],
+        summary,
+        generated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('[Deploy Trend Rollup] Error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/jobs/delivery/alerts', async (req, res) => {
     try {
       const windowMinutes = Number(req.query.windowMinutes || 60);

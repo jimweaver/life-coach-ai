@@ -707,13 +707,24 @@ Updated: 2026-02-27
    - Added npm script: `test:metrics-dashboard`
    - Graceful shutdown test passes
 
+76. **Deploy trend telemetry rollup for trend dashboards**
+   - Added `GET /jobs/deploy-events/trend/rollup` endpoint
+   - Aggregates deploy events into time buckets with statistics
+   - Calculates: total buckets, events, errors, warns, avg per bucket, error rate
+   - Detects trend direction (increasing/decreasing/stable) by comparing halves
+   - Identifies peak bucket with timestamp and event count
+   - Configurable: sinceMinutes, bucketMinutes, runId, source filters
+   - Added test: `test-deploy-trend-rollup.js`
+   - Added npm script: `test:deploy-trend-rollup`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add deploy trend telemetry rollup for trend dashboards
-2. Add API response size metrics
-3. Add cache hit/miss rate tracking
+1. Add API response size metrics
+2. Add cache hit/miss rate tracking
+3. Add webhook delivery success rate tracking
 
 ---
 
