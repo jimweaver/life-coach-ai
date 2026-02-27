@@ -358,7 +358,14 @@ Updated: 2026-02-27
    - Added coverage: `test-canary-drift-trend.js`
    - Deployment/readiness docs updated with trend gate
 
-44. **Deploy event trend dashboard endpoint added (timeline + failure heatmap)**
+44. **Ownership drift suppression observability endpoint added**
+   - Added endpoint: `GET /jobs/delivery/ownership-drift/suppression`
+   - Reports suppression state (enabled, suppressed, reason, remaining_ms, redis key state)
+   - Documents warn/critical cooldown + duplicate windows
+   - Added coverage: `test-alert-ownership-suppression.js`
+   - Governance docs updated with suppression verification steps
+
+45. **Deploy event trend dashboard endpoint added (timeline + failure heatmap)**
    - Added DB trend helpers:
      - `summarizeDeployRuns(...)`
      - `getDeployEventTimeline(...)`
@@ -372,7 +379,7 @@ Updated: 2026-02-27
    - Added coverage: `test-deploy-event-trend.js`
    - Deployment ops docs updated with trend endpoint usage
 
-45. **Ownership drift suppression controls added (cooldown + duplicate window)**
+46. **Ownership drift suppression controls added (cooldown + duplicate window)**
    - `GET /jobs/delivery/ownership-drift` now supports route suppression guards
    - Added suppression env controls:
      - `ALERT_OWNER_DRIFT_SUPPRESSION_ENABLED`
@@ -385,7 +392,7 @@ Updated: 2026-02-27
    - Added coverage: `test-alert-ownership-drift-suppression.js`
    - Governance docs updated with suppression policy verification
 
-46. **Canary drift auto-suppression controls added (duplicate drift paging guard)**
+47. **Canary drift auto-suppression controls added (duplicate drift paging guard)**
    - `GET /jobs/canary/drift` now supports route suppression via `suppress=true|false`
    - Added canary suppression env controls:
      - `CANARY_DRIFT_SUPPRESSION_ENABLED`
@@ -398,7 +405,7 @@ Updated: 2026-02-27
    - Added coverage: `test-canary-drift-suppression.js`
    - Deployment ops docs updated with canary suppression policy controls
 
-47. **Deploy trend anomaly detector added (spike + failure regression alerts)**
+48. **Deploy trend anomaly detector added (spike + failure regression alerts)**
    - Added detector module: `core/deploy-trend-anomaly.js`
    - New API endpoint: `GET /jobs/deploy-events/anomalies`
    - Detects anomalies across:
@@ -416,9 +423,8 @@ Updated: 2026-02-27
 
 ## In progress / next
 
-1. Add ownership drift suppression observability endpoint (state + cooldown remaining)
-2. Add canary drift suppression observability endpoint (state + cooldown remaining)
-3. Add deploy trend suppression controls (cooldown + duplicate anomaly paging guard)
+1. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
+2. Add deploy trend suppression controls (cooldown + duplicate anomaly paging guard)
 
 ---
 

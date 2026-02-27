@@ -141,8 +141,8 @@ After policy changes:
 2. Trigger policy test suite:
    - `npm run test:alert-policy`
    - `npm run test:alert-ownership`
+   - `npm run test:alert-ownership-suppression`
    - `npm run test:alert-drift`
-   - `npm run test:alert-drift-suppress`
    - `npm run test:alerts`
 3. Validate health snapshot includes alert policy:
    - `GET /health` → `delivery_alert_policy`

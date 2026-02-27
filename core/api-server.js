@@ -912,6 +912,56 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/delivery/ownership-drift/suppression', async (req, res) => {
+    try {
+      const forceSync = String(req.query.sync || 'true').toLowerCase() !== 'false';
+
+      if (!scheduler || typeof scheduler.getAlertRoutePolicy !== 'function') {
+        return res.status(400).json({
+          ok: false,
+          reason: 'ownership_drift_not_supported'
+        });
+      }
+
+      const policy = await scheduler.getAlertRoutePolicy({ forceSync });
+      const drift = ownershipDriftDetector.computeDrift(policy);
+      const suppression = await evaluateOwnershipDriftSuppression(drift);
+
+      res.json({
+        ok: true,
+        suppression,
+        policy
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/delivery/canary-drift/suppression', async (req, res) => {
+    try {
+      const forceSync = String(req.query.sync || 'true').toLowerCase() !== 'false';
+
+      if (!scheduler || typeof scheduler.getAlertRoutePolicy !== 'function') {
+        return res.status(400).json({
+          ok: false,
+          reason: 'canary_drift_not_supported'
+        });
+      }
+
+      const policy = await scheduler.getAlertRoutePolicy({ forceSync });
+      const drift = canaryDriftDetector.computeDrift(policy);
+      const suppression = await evaluateCanaryDriftSuppression(drift);
+
+      res.json({
+        ok: true,
+        suppression,
+        policy
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/jobs/delivery/ownership-drift', async (req, res) => {
     try {
       const forceSync = req.query.sync === undefined

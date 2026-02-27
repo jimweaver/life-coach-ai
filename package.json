@@ -31,6 +31,7 @@
     "test:alert-routing": "node test-alert-routing.js",
     "test:alert-policy": "node test-alert-routing-policy.js",
     "test:alert-ownership": "node test-alert-ownership-sync.js",
+    "test:alert-ownership-suppression": "node test-alert-ownership-suppression.js",
     "test:alert-drift": "node test-alert-ownership-drift.js",
     "test:alert-drift-route": "node test-alert-ownership-drift-routing.js",
     "test:alert-drift-suppress": "node test-alert-ownership-drift-suppression.js",
