@@ -1,5 +1,6 @@
 const Redis = require('ioredis');
 const { Pool } = require('pg');
+const { normalizeAuditEvent } = require('../audit-log');
 
 /**
  * Local Database Storage Manager
@@ -279,10 +280,30 @@ class DatabaseStorageManager {
   // ========== Agent Logs ==========
 
   async logAgentAction(agentId, userId, sessionId, action, durationMs, status, errorMessage = null, metadata = {}) {
+    const normalized = normalizeAuditEvent({
+      agentId,
+      userId,
+      sessionId,
+      action,
+      durationMs,
+      status,
+      errorMessage,
+      metadata
+    });
+
     await this.postgres.query(
       `INSERT INTO agent_logs (agent_id, user_id, session_id, action, duration_ms, status, error_message, metadata, timestamp)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-      [agentId, userId, sessionId, action, durationMs, status, errorMessage, JSON.stringify(metadata)]
+      [
+        normalized.agentId,
+        normalized.userId,
+        normalized.sessionId,
+        normalized.action,
+        normalized.durationMs,
+        normalized.status,
+        normalized.errorMessage,
+        JSON.stringify(normalized.metadata)
+      ]
     );
   }
 

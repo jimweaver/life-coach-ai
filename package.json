@@ -15,6 +15,7 @@
     "test:guardrails": "node test-api-guardrails.js",
     "test:data": "node test-data-collector.js",
     "test:adapter": "node test-model-adapter.js",
+    "test:audit": "node test-audit-log.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

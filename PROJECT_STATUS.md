@@ -88,14 +88,20 @@ Updated: 2026-02-27
    - Added retry/backoff (`DOMAIN_MODEL_RETRY_MAX`, `DOMAIN_MODEL_RETRY_BASE_DELAY_MS`)
    - Added adapter unit test coverage for skip/success/retry/schema-fail
 
+12. **Audit log normalization baseline added**
+   - Added `core/audit-log.js`
+   - `logAgentAction` now normalizes/sanitizes agent_id/action/status/duration/session_id
+   - Sensitive metadata fields are auto-redacted (`token/api_key/password/authorization/...`)
+   - Added audit test coverage: `test-audit-log.js`
+
 ---
 
 ## In progress / next
 
 1. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
 2. Extend production guardrails:
-   - audit log normalization
    - endpoint-level policy tuning (per-route thresholds)
+   - alerting hooks for repeated rate-limit hits
 3. Add external-source quality checks (freshness + duplicate suppression) for data collector
 4. Prepare deployment profile (OpenClaw-hosted + local DB)
 
@@ -118,5 +124,6 @@ npm run test:scheduler
 npm run test:guardrails
 npm run test:data
 npm run test:adapter
+npm run test:audit
 npm run test:e2e
 ```
