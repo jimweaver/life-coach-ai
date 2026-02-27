@@ -10,6 +10,7 @@
     "test:agents": "node test-agent-configs.js",
     "test:kbi": "node test-kbi-intervention.js",
     "test:day4": "node test-day4-domains.js",
+    "test:e2e": "node test-e2e-api.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

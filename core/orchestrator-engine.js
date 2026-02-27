@@ -5,6 +5,7 @@ const DatabaseStorageManager = require('./storage/database-storage');
 const DomainAgents = require('./domain-agents');
 const ConflictResolver = require('./conflict-resolver');
 const ModelRouter = require('./model-router');
+const DataCollector = require('./data-collector');
 
 class OrchestratorEngine {
   constructor() {
@@ -13,6 +14,7 @@ class OrchestratorEngine {
     this.domainAgents = new DomainAgents();
     this.conflictResolver = new ConflictResolver();
     this.modelRouter = new ModelRouter();
+    this.dataCollector = new DataCollector();
     this.agents = null;
   }
 
@@ -94,9 +96,14 @@ class OrchestratorEngine {
 
     const outputs = await Promise.all(
       targetDomains.map(async (domain) => {
-        const out = await this.domainAgents.run(domain, input, context);
+        const [out, snapshot] = await Promise.all([
+          this.domainAgents.run(domain, input, context),
+          this.dataCollector.getDomainSnapshot(domain, input)
+        ]);
+
         const agentId = domainToAgentId[domain] || `${domain}-coach`;
         out.model = this.modelRouter.forAgent(agentId);
+        out.sources = snapshot;
         return out;
       })
     );
@@ -146,7 +153,10 @@ class OrchestratorEngine {
   composeUserResponse(domainRun) {
     const blocks = domainRun.outputs.map((o) => {
       const recs = o.recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n');
-      return `【${o.domain.toUpperCase()} | model: ${o.model || 'n/a'}】\n${o.summary}\n\n建議：\n${recs}`;
+      const sourceLine = o.sources?.results?.[0]?.title
+        ? `\n來源參考：${o.sources.results[0].title}${o.sources.results[0].url ? ` (${o.sources.results[0].url})` : ''}`
+        : '';
+      return `【${o.domain.toUpperCase()} | model: ${o.model || 'n/a'}】\n${o.summary}\n\n建議：\n${recs}${sourceLine}`;
     });
 
     const conflictBlock = domainRun.conflict_notes?.length

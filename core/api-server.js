@@ -161,17 +161,17 @@ async function createServer() {
     console.log(`🚀 Life Coach API running at http://localhost:${port}`);
   });
 
-  const shutdown = async () => {
-    server.close();
+  const shutdown = async ({ exit = false } = {}) => {
+    await new Promise((resolve) => server.close(resolve));
     await engine.close();
     await db.close();
-    process.exit(0);
+    if (exit) process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown({ exit: true }));
+  process.on('SIGTERM', () => shutdown({ exit: true }));
 
-  return { app, server };
+  return { app, server, shutdown };
 }
 
 if (require.main === module) {
