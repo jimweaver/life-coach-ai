@@ -40,6 +40,12 @@ class OrchestratorEngine {
         total: 0,
         byType: {}
       },
+      agentExecution: {
+        total: 0,
+        totalMs: 0,
+        byDomain: {},
+        slowExecutions: [] // >2000ms
+      },
       startedAt: Date.now()
     };
   }
@@ -122,10 +128,15 @@ class OrchestratorEngine {
 
     const outputs = await Promise.all(
       targetDomains.map(async (domain) => {
+        const startTime = Date.now();
+
         const [out, snapshot] = await Promise.all([
           this.domainAgents.run(domain, input, context),
           this.dataCollector.getDomainSnapshot(domain, input)
         ]);
+
+        const duration = Date.now() - startTime;
+        this.recordAgentExecution(domain, duration);
 
         const agentId = domainToAgentId[domain] || `${domain}-coach`;
         out.model = this.modelRouter.forAgent(agentId);
@@ -142,6 +153,47 @@ class OrchestratorEngine {
       conflict_notes: resolved.notes,
       conflicts
     };
+  }
+
+  /**
+   * Record agent execution time
+   */
+  recordAgentExecution(domain, durationMs) {
+    this.metrics.agentExecution.total++;
+    this.metrics.agentExecution.totalMs += durationMs;
+
+    if (!this.metrics.agentExecution.byDomain[domain]) {
+      this.metrics.agentExecution.byDomain[domain] = {
+        total: 0,
+        totalMs: 0,
+        min: null,
+        max: null
+      };
+    }
+
+    const domainStats = this.metrics.agentExecution.byDomain[domain];
+    domainStats.total++;
+    domainStats.totalMs += durationMs;
+
+    if (domainStats.min === null || durationMs < domainStats.min) {
+      domainStats.min = durationMs;
+    }
+    if (domainStats.max === null || durationMs > domainStats.max) {
+      domainStats.max = durationMs;
+    }
+
+    // Track slow executions (>2000ms)
+    if (durationMs > 2000) {
+      this.metrics.agentExecution.slowExecutions.push({
+        domain,
+        durationMs,
+        timestamp: new Date().toISOString()
+      });
+      // Keep only last 50
+      if (this.metrics.agentExecution.slowExecutions.length > 50) {
+        this.metrics.agentExecution.slowExecutions.shift();
+      }
+    }
   }
 
   safetyCheck(text) {
@@ -378,6 +430,23 @@ class OrchestratorEngine {
           ? ((this.metrics.errors.total / this.metrics.requests.total) * 100).toFixed(2) + '%'
           : '0%',
         by_type: this.metrics.errors.byType
+      },
+      agent_execution: {
+        total: this.metrics.agentExecution.total,
+        avg_ms: this.metrics.agentExecution.total > 0
+          ? Math.round(this.metrics.agentExecution.totalMs / this.metrics.agentExecution.total)
+          : 0,
+        by_domain: Object.entries(this.metrics.agentExecution.byDomain).map(([domain, stats]) => ({
+          domain,
+          total: stats.total,
+          avg_ms: stats.total > 0 ? Math.round(stats.totalMs / stats.total) : 0,
+          min_ms: stats.min ?? 0,
+          max_ms: stats.max ?? 0
+        })).sort((a, b) => b.total - a.total),
+        slow_executions: {
+          count: this.metrics.agentExecution.slowExecutions.length,
+          recent: this.metrics.agentExecution.slowExecutions.slice(-5)
+        }
       },
       generated_at: new Date().toISOString()
     };

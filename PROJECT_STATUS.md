@@ -779,11 +779,25 @@ Updated: 2026-02-27
    - Added npm script: `test:memory-metrics`
    - Graceful shutdown test passes
 
+82. **Agent execution time tracking**
+   - Added agent execution tracking to `OrchestratorEngine`
+   - Tracks: total executions, average execution time, by domain
+   - Tracks min/max execution time per domain
+   - Tracks slow executions (>2000ms) with recent list
+   - Integrated into existing `getMetrics()` method
+   - Added `recordAgentExecution()` method to track timing
+   - Returns: agent_execution stats in orchestrator metrics
+   - Added test: `test-agent-execution-metrics.js`
+   - Added npm script: `test:agent-execution`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add agent execution time tracking
+1. Review observability completeness
+2. Document all metrics endpoints
+3. Consider metrics export (Prometheus/Grafana)
 
 ---
 
