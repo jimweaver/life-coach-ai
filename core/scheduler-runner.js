@@ -14,6 +14,7 @@ class SchedulerRunner {
 
     this.deliverMonitor = options.deliverMonitor ?? String(process.env.SCHEDULER_DELIVER_MONITOR || 'true').toLowerCase() !== 'false';
     this.deliverMorning = options.deliverMorning ?? String(process.env.SCHEDULER_DELIVER_MORNING || 'true').toLowerCase() !== 'false';
+    this.inlineRetryMax = Number(options.inlineRetryMax ?? process.env.SCHEDULER_INLINE_RETRY_MAX ?? 1);
   }
 
   hasOutboxSupport() {
@@ -58,14 +59,30 @@ class SchedulerRunner {
       }
     }
 
+    const maxRetries = Number.isInteger(this.inlineRetryMax)
+      ? Math.max(0, this.inlineRetryMax)
+      : 1;
+
     let deliveryResult;
     try {
-      deliveryResult = await this.delivery.deliver(envelope);
+      if (typeof this.delivery?.deliverWithRetry === 'function') {
+        deliveryResult = await this.delivery.deliverWithRetry(envelope, { maxRetries });
+      } else {
+        const oneShot = await this.delivery.deliver(envelope);
+        deliveryResult = {
+          ...oneShot,
+          attempts: 1,
+          retried: false
+        };
+      }
     } catch (err) {
       deliveryResult = {
         delivered: false,
         mode: this.delivery?.mode || 'unknown',
-        reason: err.message
+        reason: err.message,
+        attempts: 1,
+        retried: false,
+        exhausted: false
       };
     }
 

@@ -151,13 +151,19 @@ Updated: 2026-02-27
    - Added DB helper: `getOutboundEventById`
    - Test: `test-dead-letter-replay.js`
 
+21. **Inline dispatch retry enabled in scheduler**
+   - `dispatchIntervention` now uses `deliverWithRetry` inline (instead of one-shot `deliver`)
+   - New config: `SCHEDULER_INLINE_RETRY_MAX` (default `1`)
+   - Delivery metadata now carries retry attempts from inline dispatch
+   - Added test: `test-inline-dispatch-retry.js`
+
 ---
 
 ## In progress / next
 
 1. Prepare deployment profile (OpenClaw-hosted + local DB)
-2. Wire `dispatchIntervention` to use `deliverWithRetry` inline (currently single-attempt; retry deferred to runRetryCycle)
-3. Add dead-letter replay audit/requeue controls (bulk replay + replay filters)
+2. Add dead-letter replay audit/requeue controls (bulk replay + replay filters)
+3. Add delivery retry alerting policy (escalate repeated dead-letter growth)
 
 ---
 
@@ -187,5 +193,6 @@ npm run test:scheduler-delivery
 npm run test:retry
 npm run test:replay
 npm run test:quality
+npm run test:inline-retry
 npm run test:e2e
 ```

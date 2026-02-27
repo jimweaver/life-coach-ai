@@ -24,6 +24,7 @@
     "test:retry": "node test-delivery-retry.js",
     "test:replay": "node test-dead-letter-replay.js",
     "test:quality": "node test-data-quality-api.js",
+    "test:inline-retry": "node test-inline-dispatch-retry.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {
