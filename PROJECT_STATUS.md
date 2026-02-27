@@ -164,13 +164,20 @@ Updated: 2026-02-27
    - Added doc: `docs/DEPLOYMENT_PROFILE.md`
    - Added npm command: `npm run deploy:check`
 
+23. **Dead-letter replay audit/requeue controls (bulk + filters) added**
+   - Added API endpoint: `POST /jobs/dead-letter/replay-bulk`
+   - Added replay filters: `eventType`, `userId`, `olderThanMinutes`, `limit`, `maxRetries`
+   - Added scheduler method: `replayDeadLetterBatch`
+   - Extended dead-letter query filters in DB helper (`getDeadLetterEvents`)
+   - Added test: `test-dead-letter-bulk-replay.js`
+
 ---
 
 ## In progress / next
 
-1. Add dead-letter replay audit/requeue controls (bulk replay + replay filters)
-2. Add delivery retry alerting policy (escalate repeated dead-letter growth)
-3. Add deployment automation wrapper (preflight + start)
+1. Add delivery retry alerting policy (escalate repeated dead-letter growth)
+2. Add deployment automation wrapper (preflight + start)
+3. Add dead-letter replay safety policy (batch guardrails + approval mode for large replays)
 
 ---
 
@@ -200,6 +207,7 @@ npm run test:delivery
 npm run test:scheduler-delivery
 npm run test:retry
 npm run test:replay
+npm run test:replay-bulk
 npm run test:quality
 npm run test:inline-retry
 npm run test:e2e

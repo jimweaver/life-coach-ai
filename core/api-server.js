@@ -397,11 +397,93 @@ async function createServer() {
     try {
       const limit = Number(req.query.limit || 50);
       const eventType = req.query.eventType || null;
+      const userId = req.query.userId ? String(req.query.userId).trim() : null;
+      const olderThanMinutesRaw = req.query.olderThanMinutes;
+      let olderThanMinutes = null;
+
       if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
         return badRequest(res, ['limit must be an integer between 1 and 500']);
       }
-      const events = await db.getDeadLetterEvents({ limit, eventType });
-      res.json({ ok: true, count: events.length, events });
+
+      if (userId && !isUuid(userId)) {
+        return badRequest(res, ['userId query parameter must be a valid UUID']);
+      }
+
+      if (olderThanMinutesRaw !== undefined) {
+        olderThanMinutes = Number(olderThanMinutesRaw);
+        if (!Number.isInteger(olderThanMinutes) || olderThanMinutes < 1 || olderThanMinutes > 10080) {
+          return badRequest(res, ['olderThanMinutes must be an integer between 1 and 10080']);
+        }
+      }
+
+      const events = await db.getDeadLetterEvents({
+        limit,
+        eventType,
+        userId,
+        olderThanMinutes
+      });
+
+      res.json({
+        ok: true,
+        filters: {
+          limit,
+          eventType,
+          userId,
+          olderThanMinutes
+        },
+        count: events.length,
+        events
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/jobs/dead-letter/replay-bulk', async (req, res) => {
+    try {
+      const limit = Number(req.body?.limit || 20);
+      const eventType = req.body?.eventType || null;
+      const userId = req.body?.userId ? String(req.body.userId).trim() : null;
+      const olderThanMinutesRaw = req.body?.olderThanMinutes;
+      const maxRetriesRaw = req.body?.maxRetries;
+
+      let olderThanMinutes;
+      if (olderThanMinutesRaw !== undefined) {
+        olderThanMinutes = Number(olderThanMinutesRaw);
+        if (!Number.isInteger(olderThanMinutes) || olderThanMinutes < 1 || olderThanMinutes > 10080) {
+          return badRequest(res, ['olderThanMinutes must be an integer between 1 and 10080']);
+        }
+      }
+
+      let maxRetries;
+      if (maxRetriesRaw !== undefined) {
+        maxRetries = Number(maxRetriesRaw);
+        if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 20) {
+          return badRequest(res, ['maxRetries must be an integer between 0 and 20']);
+        }
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+        return badRequest(res, ['limit must be an integer between 1 and 500']);
+      }
+
+      if (userId && !isUuid(userId)) {
+        return badRequest(res, ['userId must be a valid UUID']);
+      }
+
+      const result = await scheduler.replayDeadLetterBatch({
+        limit,
+        eventType,
+        userId,
+        olderThanMinutes,
+        maxRetries
+      });
+
+      if (result.reason === 'dead_letter_batch_not_supported') {
+        return res.status(400).json(result);
+      }
+
+      res.json({ ok: true, result });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

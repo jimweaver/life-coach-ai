@@ -511,7 +511,7 @@ class DatabaseStorageManager {
   /**
    * List dead-letter events for inspection/manual replay.
    */
-  async getDeadLetterEvents({ limit = 50, eventType = null } = {}) {
+  async getDeadLetterEvents({ limit = 50, eventType = null, userId = null, olderThanMinutes = null } = {}) {
     await this.ensureOutboxTable();
 
     let query = `SELECT * FROM outbound_events WHERE status = 'dead_letter'`;
@@ -520,6 +520,16 @@ class DatabaseStorageManager {
     if (eventType) {
       params.push(eventType);
       query += ` AND event_type = $${params.length}`;
+    }
+
+    if (userId) {
+      params.push(userId);
+      query += ` AND user_id = $${params.length}`;
+    }
+
+    if (Number.isInteger(olderThanMinutes) && olderThanMinutes > 0) {
+      params.push(olderThanMinutes);
+      query += ` AND created_at <= NOW() - ($${params.length} * INTERVAL '1 minute')`;
     }
 
     params.push(limit);

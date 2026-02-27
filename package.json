@@ -23,6 +23,7 @@
     "test:scheduler-delivery": "node test-scheduler-delivery.js",
     "test:retry": "node test-delivery-retry.js",
     "test:replay": "node test-dead-letter-replay.js",
+    "test:replay-bulk": "node test-dead-letter-bulk-replay.js",
     "test:quality": "node test-data-quality-api.js",
     "test:inline-retry": "node test-inline-dispatch-retry.js",
     "deploy:check": "node scripts/deployment-check.js",

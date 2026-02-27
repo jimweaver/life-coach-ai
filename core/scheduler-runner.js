@@ -398,6 +398,92 @@ class SchedulerRunner {
     };
   }
 
+  async replayDeadLetterBatch({
+    limit = 20,
+    eventType = null,
+    userId = null,
+    olderThanMinutes = null,
+    maxRetries
+  } = {}) {
+    if (!this.hasOutboxSupport() || typeof this.db.getDeadLetterEvents !== 'function') {
+      return { ok: false, reason: 'dead_letter_batch_not_supported' };
+    }
+
+    const events = await this.db.getDeadLetterEvents({
+      limit,
+      eventType,
+      userId,
+      olderThanMinutes
+    });
+
+    const summary = {
+      ok: true,
+      filters: {
+        limit,
+        eventType,
+        userId,
+        olderThanMinutes: Number.isInteger(olderThanMinutes) ? olderThanMinutes : null
+      },
+      found: events.length,
+      processed: 0,
+      dispatched: 0,
+      still_dead_letter: 0,
+      failed: 0,
+      results: []
+    };
+
+    for (const event of events) {
+      const replay = await this.replayDeadLetterEvent({
+        eventId: event.event_id,
+        maxRetries
+      });
+
+      summary.processed += 1;
+
+      if (replay.ok && replay.status === 'dispatched') {
+        summary.dispatched += 1;
+      } else if (replay.status === 'dead_letter') {
+        summary.still_dead_letter += 1;
+      } else {
+        summary.failed += 1;
+      }
+
+      summary.results.push({
+        event_id: event.event_id,
+        event_type: event.event_type,
+        user_id: event.user_id,
+        status: replay.status || 'unknown',
+        ok: !!replay.ok,
+        reason: replay.reason || null,
+        attempts: replay.delivery?.attempts ?? null
+      });
+    }
+
+    try {
+      await this.db.logAgentAction(
+        'scheduler-replay',
+        userId || null,
+        null,
+        'dead_letter_replay_bulk',
+        null,
+        'success',
+        null,
+        {
+          filters: summary.filters,
+          found: summary.found,
+          processed: summary.processed,
+          dispatched: summary.dispatched,
+          still_dead_letter: summary.still_dead_letter,
+          failed: summary.failed
+        }
+      );
+    } catch (_e) {
+      // best effort
+    }
+
+    return summary;
+  }
+
   async runMorningCycle({ limitUsers = 100 } = {}) {
     const users = await this.db.listUserIds(limitUsers);
 
