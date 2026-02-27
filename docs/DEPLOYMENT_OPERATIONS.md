@@ -201,6 +201,13 @@ Deploy event analytics APIs:
   - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
   - optional controls: `emitAudit`, `route`, `routeMinLevel`, `routeUserId`, `routeChannel`, `routeRetryMax`
   - detects threshold breaches for route-failure saturation and suppression saturation/spikes
+  - route suppression guard (cooldown + duplicate window) via:
+    - `DEPLOY_TREND_TELEMETRY_ALERT_SUPPRESSION_ENABLED`
+    - `DEPLOY_TREND_TELEMETRY_ALERT_COOLDOWN_MINUTES`
+    - `DEPLOY_TREND_TELEMETRY_ALERT_DUPLICATE_WINDOW_MINUTES`
+    - `DEPLOY_TREND_TELEMETRY_ALERT_STATE_KEY`
+    - `DEPLOY_TREND_TELEMETRY_ALERT_STATE_TTL_SEC`
+  - emits suppression audit action: `deploy_trend_telemetry_alert_route_suppressed`
 
 Validation:
 
@@ -212,6 +219,7 @@ npm run test:deploy-anomaly
 npm run test:deploy-telemetry
 npm run test:deploy-telemetry-trend
 npm run test:deploy-telemetry-alert
+npm run test:deploy-telemetry-alert-suppression
 ```
 
 ---

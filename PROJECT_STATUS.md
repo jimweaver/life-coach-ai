@@ -486,12 +486,27 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-telemetry-alert`
    - Deployment ops + readiness docs updated with telemetry alert endpoint/test gates
 
+56. **Deploy telemetry alert routing suppression controls added (cooldown + duplicate paging guard)**
+   - Added route suppression policy for telemetry alerts in `core/api-server.js`:
+     - `DEPLOY_TREND_TELEMETRY_ALERT_SUPPRESSION_ENABLED`
+     - `DEPLOY_TREND_TELEMETRY_ALERT_COOLDOWN_MINUTES`
+     - `DEPLOY_TREND_TELEMETRY_ALERT_DUPLICATE_WINDOW_MINUTES`
+     - `DEPLOY_TREND_TELEMETRY_ALERT_STATE_KEY`
+     - `DEPLOY_TREND_TELEMETRY_ALERT_STATE_TTL_SEC`
+   - Added suppression state tracking helpers (`build/load/save/evaluate`) with Redis+memory fallback
+   - `GET /jobs/deploy-events/anomalies/telemetry/alerts` now returns `suppression` and blocks duplicate/cooldown routes
+   - Added suppression audit action: `deploy_trend_telemetry_alert_route_suppressed`
+   - `/health` policy snapshot now includes telemetry alert suppression controls
+   - Added coverage: `test-deploy-trend-telemetry-alert-suppression.js`
+   - Added npm script: `test:deploy-telemetry-alert-suppression`
+   - Deployment ops + readiness docs updated with suppression guard validation
+
 ---
 
 ## In progress / next
 
 1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Add suppression/cooldown controls for deploy telemetry alert routing to prevent repeated paging
+2. Add telemetry-alert suppression observability endpoint (state + cooldown remaining) for deploy trend alerts
 3. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
@@ -555,6 +570,7 @@ npm run test:deploy-anomaly
 npm run test:deploy-telemetry
 npm run test:deploy-telemetry-trend
 npm run test:deploy-telemetry-alert
+npm run test:deploy-telemetry-alert-suppression
 npm run test:deploy-suppression
 npm run test:deploy-dashboard
 npm run test:deploy-smoke
