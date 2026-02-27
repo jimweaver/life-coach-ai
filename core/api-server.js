@@ -407,6 +407,38 @@ async function createServer() {
     }
   });
 
+  app.post('/jobs/dead-letter/:eventId/replay', async (req, res) => {
+    try {
+      const eventId = String(req.params.eventId || '').trim();
+      if (!isUuid(eventId)) {
+        return badRequest(res, ['eventId path parameter must be a valid UUID']);
+      }
+
+      const maxRetriesRaw = req.body?.maxRetries;
+      let maxRetries;
+      if (maxRetriesRaw !== undefined) {
+        maxRetries = Number(maxRetriesRaw);
+        if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 20) {
+          return badRequest(res, ['maxRetries must be an integer between 0 and 20']);
+        }
+      }
+
+      const replay = await scheduler.replayDeadLetterEvent({ eventId, maxRetries });
+
+      if (replay.reason === 'not_found') {
+        return res.status(404).json(replay);
+      }
+
+      if (replay.reason === 'not_dead_letter' || replay.reason === 'outbox_replay_not_supported') {
+        return res.status(400).json(replay);
+      }
+
+      res.json(replay);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/jobs/run-morning-cycle', async (req, res) => {
     try {
       const limitUsers = Number(req.body?.limitUsers || 100);

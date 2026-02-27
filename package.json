@@ -22,6 +22,7 @@
     "test:delivery": "node test-cron-delivery.js",
     "test:scheduler-delivery": "node test-scheduler-delivery.js",
     "test:retry": "node test-delivery-retry.js",
+    "test:replay": "node test-dead-letter-replay.js",
     "test:quality": "node test-data-quality-api.js",
     "start:api": "node core/api-server.js"
   },

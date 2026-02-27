@@ -298,6 +298,89 @@ class SchedulerRunner {
     return summary;
   }
 
+  /**
+   * Replay a single dead-letter event on-demand.
+   * - success: mark dispatched
+   * - failure: keep dead_letter and attach replay metadata
+   */
+  async replayDeadLetterEvent({ eventId, maxRetries } = {}) {
+    if (!this.hasOutboxSupport() || typeof this.db.getOutboundEventById !== 'function') {
+      return { ok: false, reason: 'outbox_replay_not_supported' };
+    }
+
+    const event = await this.db.getOutboundEventById(eventId);
+    if (!event) {
+      return { ok: false, reason: 'not_found', event_id: eventId };
+    }
+
+    if (event.status !== 'dead_letter') {
+      return {
+        ok: false,
+        reason: 'not_dead_letter',
+        event_id: eventId,
+        current_status: event.status
+      };
+    }
+
+    const envelope = event.payload || {};
+
+    let deliveryResult;
+    try {
+      deliveryResult = await this.delivery.deliverWithRetry(envelope, {
+        maxRetries: Number.isInteger(maxRetries) ? maxRetries : undefined
+      });
+    } catch (err) {
+      deliveryResult = {
+        delivered: false,
+        mode: this.delivery?.mode || 'unknown',
+        reason: err.message,
+        exhausted: true
+      };
+    }
+
+    if (deliveryResult?.delivered) {
+      await this.db.markOutboundEventDispatched(eventId, {
+        replay: {
+          replayed: true,
+          replayed_at: new Date().toISOString(),
+          attempts: deliveryResult.attempts,
+          retried: deliveryResult.retried,
+          mode: deliveryResult.mode
+        },
+        delivery: deliveryResult
+      });
+
+      return {
+        ok: true,
+        event_id: eventId,
+        status: 'dispatched',
+        delivery: deliveryResult
+      };
+    }
+
+    await this.db.markOutboundEventDeadLetter(
+      eventId,
+      deliveryResult?.reason || 'replay_failed',
+      {
+        replay: {
+          replayed: true,
+          replayed_at: new Date().toISOString(),
+          attempts: deliveryResult?.attempts || 1,
+          exhausted: !!deliveryResult?.exhausted
+        },
+        delivery: deliveryResult
+      }
+    );
+
+    return {
+      ok: false,
+      event_id: eventId,
+      status: 'dead_letter',
+      reason: deliveryResult?.reason || 'replay_failed',
+      delivery: deliveryResult
+    };
+  }
+
   async runMorningCycle({ limitUsers = 100 } = {}) {
     const users = await this.db.listUserIds(limitUsers);
 

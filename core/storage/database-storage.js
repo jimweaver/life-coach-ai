@@ -419,6 +419,17 @@ class DatabaseStorageManager {
     return result.rows;
   }
 
+  async getOutboundEventById(eventId) {
+    await this.ensureOutboxTable();
+
+    const result = await this.postgres.query(
+      `SELECT * FROM outbound_events WHERE event_id = $1 LIMIT 1`,
+      [eventId]
+    );
+
+    return result.rows[0] || null;
+  }
+
   async markOutboundEventDispatched(eventId, metadata = {}) {
     await this.ensureOutboxTable();
 
@@ -427,7 +438,8 @@ class DatabaseStorageManager {
        SET status = 'dispatched',
            dispatched_at = NOW(),
            delivery_metadata = COALESCE(delivery_metadata, '{}'::jsonb) || $2::jsonb,
-           error_message = NULL
+           error_message = NULL,
+           next_retry_at = NULL
        WHERE event_id = $1`,
       [eventId, JSON.stringify(metadata || {})]
     );

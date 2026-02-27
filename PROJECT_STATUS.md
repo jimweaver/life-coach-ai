@@ -143,13 +143,21 @@ Updated: 2026-02-27
    - Validation: domain enum check, input length bounds
    - Test: `test-data-quality-api.js` (8 tests)
 
+20. **Dead-letter replay endpoint added**
+   - `POST /jobs/dead-letter/:eventId/replay` for manual replay of dead-letter events
+   - Validates `eventId` UUID + optional `maxRetries` (0–20)
+   - Replay success path marks event `dispatched`; failed replay remains `dead_letter` with replay metadata
+   - Added scheduler method: `replayDeadLetterEvent`
+   - Added DB helper: `getOutboundEventById`
+   - Test: `test-dead-letter-replay.js`
+
 ---
 
 ## In progress / next
 
 1. Prepare deployment profile (OpenClaw-hosted + local DB)
-2. Add dead-letter replay endpoint (`POST /jobs/dead-letter/:eventId/replay`)
-3. Wire `dispatchIntervention` to use `deliverWithRetry` (currently single-attempt; retry deferred to runRetryCycle)
+2. Wire `dispatchIntervention` to use `deliverWithRetry` inline (currently single-attempt; retry deferred to runRetryCycle)
+3. Add dead-letter replay audit/requeue controls (bulk replay + replay filters)
 
 ---
 
@@ -177,6 +185,7 @@ npm run test:outbox
 npm run test:delivery
 npm run test:scheduler-delivery
 npm run test:retry
+npm run test:replay
 npm run test:quality
 npm run test:e2e
 ```
