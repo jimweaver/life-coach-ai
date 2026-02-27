@@ -27,6 +27,7 @@ const DeployTrendTelemetryAlertDetector = require('./deploy-trend-telemetry-aler
 const DeployTrendTelemetrySuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert');
 const DeployTrendTelemetrySuppressionAlertSuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert-suppression-alert');
 const DeployEventSink = require('../scripts/deploy-event-sink');
+const PrometheusExporter = require('./prometheus-exporter');
 const {
   isUuid,
   createRateLimiter,
@@ -59,6 +60,12 @@ async function createServer() {
   const deployTrendTelemetryAlertDetector = new DeployTrendTelemetryAlertDetector();
   const deployTrendTelemetrySuppressionAlertDetector = new DeployTrendTelemetrySuppressionAlertDetector();
   const deployTrendTelemetrySuppressionAlertSuppressionAlertDetector = new DeployTrendTelemetrySuppressionAlertSuppressionAlertDetector();
+
+  // Prometheus metrics exporter
+  const prometheusExporter = new PrometheusExporter({
+    prefix: process.env.PROMETHEUS_METRICS_PREFIX || 'lifecoach',
+    helpText: process.env.PROMETHEUS_HELP_TEXT !== 'false'
+  });
 
   const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
   const canaryDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
@@ -1605,6 +1612,47 @@ async function createServer() {
         ok: false,
         error: err.message
       });
+    }
+  });
+
+  // Prometheus metrics export endpoint
+  app.get('/metrics/prometheus', async (_req, res) => {
+    try {
+      const [
+        orchestratorMetrics,
+        cacheMetrics
+      ] = await Promise.all([
+        Promise.resolve().then(() => engine.getMetrics()),
+        Promise.resolve().then(() => db.getCacheMetrics())
+      ]);
+
+      const deliveryMetrics = cronDelivery.getDeliveryMetrics();
+      const modelMetrics = engine.getModelMetrics();
+      const memUsage = process.memoryUsage();
+      const memoryMetrics = {
+        heap_used_mb: Math.round(memUsage.heapUsed / 1024 / 1024 * 100) / 100,
+        heap_total_mb: Math.round(memUsage.heapTotal / 1024 / 1024 * 100) / 100,
+        rss_mb: Math.round(memUsage.rss / 1024 / 1024 * 100) / 100,
+        external_mb: Math.round((memUsage.external || 0) / 1024 / 1024 * 100) / 100,
+        array_buffers_mb: Math.round((memUsage.arrayBuffers || 0) / 1024 / 1024 * 100) / 100,
+        heap_utilization_percent: memUsage.heapTotal > 0
+          ? Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100 * 100) / 100
+          : 0
+      };
+
+      const prometheusOutput = prometheusExporter.exportAll({
+        orchestrator: orchestratorMetrics,
+        memory: memoryMetrics,
+        cache: cacheMetrics,
+        delivery: deliveryMetrics,
+        model: modelMetrics
+      });
+
+      res.set('Content-Type', 'text/plain; charset=utf-8');
+      res.send(prometheusOutput);
+    } catch (err) {
+      console.error('[Prometheus Metrics] Error:', err);
+      res.status(500).type('text').send(`# Error: ${err.message}`);
     }
   });
 

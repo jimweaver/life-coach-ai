@@ -800,13 +800,25 @@ Updated: 2026-02-27
    - Includes deploy event metrics documentation
    - Version history and changelog
 
+84. **Prometheus metrics export endpoint**
+   - Created `PrometheusExporter` class in `core/prometheus-exporter.js`
+   - Converts all internal metrics to Prometheus exposition format
+   - Supports: orchestrator, memory, cache, delivery, model metrics
+   - Generates proper HELP, TYPE, and bucket annotations
+   - Added `GET /metrics/prometheus` endpoint
+   - Returns text/plain format compatible with Prometheus scraping
+   - Configurable prefix (default: `lifecoach`)
+   - Added test: `test-prometheus-metrics.js`
+   - Added npm script: `test:prometheus`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Consider Prometheus metrics export endpoint
-2. Add metrics alerting thresholds configuration
-3. Create Grafana dashboard templates
+1. Add metrics alerting thresholds configuration
+2. Create Grafana dashboard templates
+3. Add Prometheus scrape configuration example
 
 ---
 
