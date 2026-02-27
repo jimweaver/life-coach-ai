@@ -10,6 +10,15 @@ const DatabaseStorageManager = require('./storage/database-storage');
 const KBIMonitor = require('./kbi-monitor');
 const InterventionEngine = require('./intervention-engine');
 const SchedulerRunner = require('./scheduler-runner');
+const {
+  isUuid,
+  createRateLimiter,
+  badRequest,
+  validateChatPayload,
+  validateGoalPayload,
+  validateUserProfilePayload,
+  validateRiskPayload
+} = require('./guardrails');
 
 async function createServer() {
   const app = express();
@@ -26,6 +35,23 @@ async function createServer() {
   app.use(express.json({ limit: '1mb' }));
   app.use(morgan('dev'));
 
+  const writeLimiter = createRateLimiter({
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
+    maxRequests: Number(process.env.RATE_LIMIT_MAX || 120)
+  });
+
+  app.use((req, res, next) => {
+    if (req.method === 'POST') return writeLimiter(req, res, next);
+    next();
+  });
+
+  app.param('userId', (req, res, next, userId) => {
+    if (!isUuid(userId)) {
+      return badRequest(res, ['userId path parameter must be a valid UUID']);
+    }
+    next();
+  });
+
   app.get('/health', async (_req, res) => {
     const status = await db.testConnections();
     res.json({
@@ -37,11 +63,10 @@ async function createServer() {
 
   app.post('/chat', async (req, res) => {
     try {
-      const { user_id, session_id, message } = req.body || {};
-      if (!user_id || !message) {
-        return res.status(400).json({ error: 'user_id and message are required' });
-      }
+      const errors = validateChatPayload(req.body);
+      if (errors.length) return badRequest(res, errors);
 
+      const { user_id, session_id, message } = req.body;
       const out = await engine.process({
         userId: user_id,
         sessionId: session_id || uuidv4(),
@@ -66,6 +91,9 @@ async function createServer() {
 
   app.post('/profile/:userId', async (req, res) => {
     try {
+      const errors = validateUserProfilePayload(req.body);
+      if (errors.length) return badRequest(res, errors);
+
       const updated = await db.updateUserProfile(req.params.userId, req.body || {});
       res.json({ ok: true, profile: updated });
     } catch (err) {
@@ -84,6 +112,9 @@ async function createServer() {
 
   app.post('/goals/:userId', async (req, res) => {
     try {
+      const errors = validateGoalPayload(req.body);
+      if (errors.length) return badRequest(res, errors);
+
       const goalId = await db.createGoal(req.params.userId, req.body || {});
       res.json({ ok: true, goal_id: goalId });
     } catch (err) {
@@ -93,13 +124,18 @@ async function createServer() {
 
   app.get('/kbi/:userId/:metric', async (req, res) => {
     try {
+      const metric = req.params.metric;
+      if (!/^[a-z_][a-z0-9_]{1,63}$/i.test(metric)) {
+        return badRequest(res, ['metric must be an alphanumeric identifier']);
+      }
+
       const data = await db.getKBIMetrics(
         req.params.userId,
-        req.params.metric,
+        metric,
         req.query.period || 'daily',
         Number(req.query.limit || 30)
       );
-      res.json({ user_id: req.params.userId, metric: req.params.metric, data });
+      res.json({ user_id: req.params.userId, metric, data });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -151,6 +187,9 @@ async function createServer() {
 
   app.post('/intervention/risk', async (req, res) => {
     try {
+      const errors = validateRiskPayload(req.body);
+      if (errors.length) return badRequest(res, errors);
+
       const alerts = req.body?.alerts || [];
       const message = interventionEngine.buildRiskIntervention(alerts);
       res.json({ message, hasIntervention: !!message });
@@ -162,6 +201,9 @@ async function createServer() {
   app.post('/jobs/run-monitor-cycle', async (req, res) => {
     try {
       const limitUsers = Number(req.body?.limitUsers || 100);
+      if (!Number.isInteger(limitUsers) || limitUsers < 1 || limitUsers > 1000) {
+        return badRequest(res, ['limitUsers must be an integer between 1 and 1000']);
+      }
       const result = await scheduler.runMonitorCycle({ limitUsers });
       res.json({ ok: true, result });
     } catch (err) {
@@ -172,6 +214,9 @@ async function createServer() {
   app.post('/jobs/run-morning-cycle', async (req, res) => {
     try {
       const limitUsers = Number(req.body?.limitUsers || 100);
+      if (!Number.isInteger(limitUsers) || limitUsers < 1 || limitUsers > 1000) {
+        return badRequest(res, ['limitUsers must be an integer between 1 and 1000']);
+      }
       const result = await scheduler.runMorningCycle({ limitUsers });
       res.json({ ok: true, result });
     } catch (err) {

@@ -12,6 +12,7 @@
     "test:day4": "node test-day4-domains.js",
     "test:e2e": "node test-e2e-api.js",
     "test:scheduler": "node test-scheduler-runner.js",
+    "test:guardrails": "node test-api-guardrails.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

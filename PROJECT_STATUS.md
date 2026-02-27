@@ -60,6 +60,12 @@ Updated: 2026-02-27
      - `POST /jobs/run-monitor-cycle`
      - `POST /jobs/run-morning-cycle`
 
+8. **Production guardrails baseline**
+   - Added `core/guardrails.js`
+   - Request validation for chat/profile/goals/risk + userId param
+   - POST rate limiting (env-controlled)
+   - Added guardrail test: `test-api-guardrails.js`
+
 ---
 
 ## In progress / next
@@ -67,10 +73,9 @@ Updated: 2026-02-27
 1. Replace current domain heuristic stubs with real model-calling adapter (OpenClaw-compatible mode)
 2. Expand data-collector citation payload (multi-source ranking + confidence)
 3. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
-4. Add production guardrails:
-   - rate limit
-   - request schema validation
+4. Extend production guardrails:
    - audit log normalization
+   - distributed/shared rate-limit backend (Redis-based)
 5. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---
@@ -88,5 +93,7 @@ npm run test:model
 npm run test:kbi
 npm run test:day3
 npm run test:day4
+npm run test:scheduler
+npm run test:guardrails
 npm run test:e2e
 ```
