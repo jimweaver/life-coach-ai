@@ -41,6 +41,27 @@ The command prints a JSON report and exits non-zero if critical checks fail.
 
 ---
 
+## One-command deploy wrapper
+
+Run preflight then start API in one command:
+
+```bash
+npm run deploy:up
+```
+
+Useful variants:
+
+```bash
+npm run deploy:preflight               # check-only
+npm run deploy:up -- --skip-check      # start API directly (not recommended)
+npm run deploy:up -- --profile=/abs/path/to/profile.json
+```
+
+Wrapper script:
+- `scripts/deploy-wrapper.js`
+
+---
+
 ## Baseline deployment checklist
 
 1. Copy env template and customize:
@@ -48,11 +69,10 @@ The command prints a JSON report and exits non-zero if critical checks fail.
 2. Ensure local services are running:
    - Redis on `REDIS_HOST:REDIS_PORT`
    - PostgreSQL reachable by `DATABASE_URL`
-3. Run readiness check:
-   - `npm run deploy:check`
-4. Start API:
-   - `npm run start:api`
-5. Verify health endpoint:
+3. Run one-command preflight + startup:
+   - `npm run deploy:up`
+   - (or check-only: `npm run deploy:preflight`)
+4. Verify health endpoint:
    - `GET /health`
 
 ---

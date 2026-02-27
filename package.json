@@ -27,7 +27,10 @@
     "test:quality": "node test-data-quality-api.js",
     "test:alerts": "node test-delivery-alerts.js",
     "test:inline-retry": "node test-inline-dispatch-retry.js",
+    "test:deploy": "node test-deploy-wrapper.js",
     "deploy:check": "node scripts/deployment-check.js",
+    "deploy:up": "node scripts/deploy-wrapper.js",
+    "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

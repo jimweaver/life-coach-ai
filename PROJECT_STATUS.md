@@ -179,13 +179,21 @@ Updated: 2026-02-27
    - Alert events now emit audit logs (`delivery-alert` / `delivery_alert_triggered`)
    - Added test: `test-delivery-alerts.js`
 
+25. **Deployment automation wrapper added (preflight + start)**
+   - Added wrapper script: `scripts/deploy-wrapper.js`
+   - New commands:
+     - `npm run deploy:up` (preflight then start API)
+     - `npm run deploy:preflight` (check-only)
+   - Supports optional flags: `--skip-check`, `--profile=/abs/path/profile.json`
+   - Added verification test: `test-deploy-wrapper.js`
+
 ---
 
 ## In progress / next
 
-1. Add deployment automation wrapper (preflight + start)
-2. Add dead-letter replay safety policy (batch guardrails + approval mode for large replays)
-3. Add alert routing integration (pipe `delivery_alert_triggered` into cron-event/user notification flow)
+1. Add dead-letter replay safety policy (batch guardrails + approval mode for large replays)
+2. Add alert routing integration (pipe `delivery_alert_triggered` into cron-event/user notification flow)
+3. Add deployment docs hardening (rollback + smoke-check playbook)
 
 ---
 
@@ -193,8 +201,8 @@ Updated: 2026-02-27
 
 ```bash
 # API
-npm run deploy:check
-npm run start:api
+npm run deploy:preflight
+npm run deploy:up
 
 # Tests
 npm run test:db
@@ -219,5 +227,6 @@ npm run test:replay-bulk
 npm run test:quality
 npm run test:alerts
 npm run test:inline-retry
+npm run test:deploy
 npm run test:e2e
 ```
