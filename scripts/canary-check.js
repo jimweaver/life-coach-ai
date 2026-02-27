@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+const fs = require('fs/promises');
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 function percentile(values, p) {
@@ -7,6 +9,129 @@ function percentile(values, p) {
   const sorted = [...values].sort((a, b) => a - b);
   const idx = Math.ceil((p / 100) * sorted.length) - 1;
   return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
+}
+
+function resolveHistoryFile(options = {}) {
+  const raw = options.historyFile
+    || options.history_file
+    || process.env.CANARY_HISTORY_FILE
+    || path.join(__dirname, '..', 'logs', 'canary-history.jsonl');
+
+  return path.resolve(raw);
+}
+
+function parseHistoryLines(text) {
+  const entries = [];
+
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        entries.push(parsed);
+      }
+    } catch (_e) {
+      // ignore malformed lines to keep history resilient
+    }
+  }
+
+  return entries;
+}
+
+async function loadHistory(filePath) {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    return parseHistoryLines(raw);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+async function appendHistory(filePath, report) {
+  const entry = {
+    ts: new Date().toISOString(),
+    ok: !!report?.ok,
+    rollback_recommended: !!report?.rollback_recommended,
+    metrics: report?.metrics || {},
+    thresholds: report?.thresholds || {},
+    request_count: report?.request_count || null
+  };
+
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+
+  return entry;
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function computeSuggestedThresholds(history = [], options = {}) {
+  const minSamples = Number(options.minSamples ?? process.env.CANARY_PROFILE_MIN_SAMPLES ?? 5);
+  const errorHeadroom = Number(options.errorHeadroom ?? process.env.CANARY_PROFILE_ERROR_HEADROOM ?? 0.02);
+  const latencyMultiplier = Number(options.latencyMultiplier ?? process.env.CANARY_PROFILE_LATENCY_MULTIPLIER ?? 1.2);
+
+  const usable = history.filter((h) => h && typeof h === 'object' && h.metrics && typeof h.metrics === 'object');
+
+  if (usable.length < minSamples) {
+    return {
+      ready: false,
+      sample_count: usable.length,
+      min_samples: minSamples,
+      reason: 'insufficient_samples',
+      suggested_thresholds: null
+    };
+  }
+
+  const errorRates = usable
+    .map((h) => Number(h.metrics.error_rate))
+    .filter((x) => Number.isFinite(x));
+
+  const p95s = usable
+    .map((h) => Number(h.metrics.p95_ms))
+    .filter((x) => Number.isFinite(x) && x > 0);
+
+  const avgs = usable
+    .map((h) => Number(h.metrics.avg_ms))
+    .filter((x) => Number.isFinite(x) && x > 0);
+
+  if (errorRates.length < minSamples || p95s.length < minSamples || avgs.length < minSamples) {
+    return {
+      ready: false,
+      sample_count: usable.length,
+      min_samples: minSamples,
+      reason: 'insufficient_metric_coverage',
+      suggested_thresholds: null
+    };
+  }
+
+  const observed = {
+    error_rate_p95: Number(percentile(errorRates, 95).toFixed(4)),
+    p95_latency_p95: Number(percentile(p95s, 95).toFixed(2)),
+    avg_latency_p95: Number(percentile(avgs, 95).toFixed(2))
+  };
+
+  const suggested = {
+    max_error_rate: Number(clampNumber(observed.error_rate_p95 + errorHeadroom, 0.01, 0.95).toFixed(4)),
+    max_p95_ms: Math.max(500, Math.round(observed.p95_latency_p95 * latencyMultiplier)),
+    max_avg_ms: Math.max(300, Math.round(observed.avg_latency_p95 * latencyMultiplier))
+  };
+
+  return {
+    ready: true,
+    sample_count: usable.length,
+    min_samples: minSamples,
+    observed,
+    suggested_thresholds: suggested,
+    params: {
+      error_headroom: errorHeadroom,
+      latency_multiplier: latencyMultiplier
+    }
+  };
 }
 
 async function fetchWithTimeout(url, opts = {}, timeoutMs = 8000) {
@@ -88,6 +213,11 @@ async function runCanary(options = {}) {
   const maxP95Ms = Number(options.maxP95Ms ?? process.env.CANARY_P95_MAX_MS ?? 3500);
   const maxAvgMs = Number(options.maxAvgMs ?? process.env.CANARY_AVG_MAX_MS ?? 2200);
 
+  const persist = options.persist ?? String(process.env.CANARY_HISTORY_ENABLED || 'true').toLowerCase() !== 'false';
+  const historyFile = resolveHistoryFile(options);
+
+  const transactionRunner = options.transactionRunner || runSingleTransaction;
+
   const report = {
     ok: false,
     base_url: baseUrl,
@@ -107,14 +237,22 @@ async function runCanary(options = {}) {
     },
     rollback_recommended: false,
     rollback_reasons: [],
-    samples: []
+    samples: [],
+    history: {
+      enabled: !!persist,
+      file: historyFile,
+      saved: false,
+      sample_count: 0,
+      error: null
+    },
+    baseline_profile: null
   };
 
   const durations = [];
 
   for (let i = 0; i < requestCount; i += 1) {
     try {
-      const tx = await runSingleTransaction(baseUrl, timeoutMs);
+      const tx = await transactionRunner(baseUrl, timeoutMs);
       report.metrics.success += 1;
       durations.push(tx.duration_ms);
       report.samples.push({
@@ -159,6 +297,27 @@ async function runCanary(options = {}) {
   report.rollback_recommended = report.rollback_reasons.length > 0;
   report.ok = !report.rollback_recommended;
 
+  try {
+    if (persist) {
+      await appendHistory(historyFile, report);
+      report.history.saved = true;
+    }
+
+    const history = await loadHistory(historyFile);
+    report.history.sample_count = history.length;
+
+    report.baseline_profile = computeSuggestedThresholds(history, {
+      minSamples: options.profileMinSamples
+    });
+  } catch (err) {
+    report.history.error = err.message;
+    report.baseline_profile = {
+      ready: false,
+      reason: 'history_unavailable',
+      error: err.message
+    };
+  }
+
   return report;
 }
 
@@ -179,5 +338,12 @@ if (require.main === module) {
 }
 
 module.exports = {
-  runCanary
+  percentile,
+  resolveHistoryFile,
+  parseHistoryLines,
+  loadHistory,
+  appendHistory,
+  computeSuggestedThresholds,
+  runCanary,
+  runSingleTransaction
 };

@@ -22,7 +22,8 @@ async function run() {
       timeoutMs: 10000,
       maxErrorRate: 0.5,
       maxP95Ms: 8000,
-      maxAvgMs: 6000
+      maxAvgMs: 6000,
+      persist: false
     });
 
     assert(report.ok === true, 'expected canary report ok=true');

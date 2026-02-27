@@ -71,6 +71,22 @@ Rollback recommendation is triggered when one of these thresholds is exceeded:
 
 The canary result is printed as JSON and exits non-zero on rollback recommendation.
 
+### Canary baseline profiling (auto-calibration)
+
+Canary reports are persisted to history (`CANARY_HISTORY_FILE`, default `logs/canary-history.jsonl`).
+You can derive suggested thresholds from historical runs:
+
+```bash
+npm run canary:profile
+```
+
+This returns a baseline profile with suggested values for:
+- `max_error_rate`
+- `max_p95_ms`
+- `max_avg_ms`
+
+Use it to tune canary thresholds over time instead of static defaults.
+
 ### Deploy-wrapper observability hooks
 
 Set `DEPLOY_WRAPPER_LOG_FORMAT=json` to emit structured JSON events with step durations.
@@ -162,6 +178,11 @@ Each event includes `ts` and timing fields like `duration_ms` / `total_ms` when 
 | `CANARY_MAX_ERROR_RATE` | 0.2 | Rollback threshold for failed request ratio |
 | `CANARY_P95_MAX_MS` | 3500 | Rollback threshold for p95 latency |
 | `CANARY_AVG_MAX_MS` | 2200 | Rollback threshold for average latency |
+| `CANARY_HISTORY_ENABLED` | true | Persist canary run metrics to history |
+| `CANARY_HISTORY_FILE` | `logs/canary-history.jsonl` | Canary history file path |
+| `CANARY_PROFILE_MIN_SAMPLES` | 5 | Minimum history samples for baseline profile |
+| `CANARY_PROFILE_ERROR_HEADROOM` | 0.02 | Error-rate buffer for suggested threshold |
+| `CANARY_PROFILE_LATENCY_MULTIPLIER` | 1.2 | Latency multiplier for suggested thresholds |
 | `DEPLOY_WRAPPER_LOG_FORMAT` | text | Wrapper log format (`text` or `json`) |
 | `DEPLOY_WRAPPER_READY_TIMEOUT_MS` | 20000 | Max wait for `/ready` in managed modes |
 | `DEPLOY_WRAPPER_READY_INTERVAL_MS` | 500 | Poll interval for `/ready` |

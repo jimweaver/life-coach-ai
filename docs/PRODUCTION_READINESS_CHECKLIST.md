@@ -61,6 +61,8 @@ Suggested envs:
   - `npm run smoke:deep`
 - [ ] Canary gate pass:
   - `npm run deploy:canary`
+- [ ] Canary baseline profile reviewed:
+  - `npm run canary:profile`
 
 ---
 

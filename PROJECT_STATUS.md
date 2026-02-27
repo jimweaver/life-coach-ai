@@ -295,13 +295,21 @@ Updated: 2026-02-27
    - Added coverage: `test-alert-ownership-sync.js`
    - Updated governance docs with roster format and verification flow
 
+37. **Canary baseline profiling added (auto-calibrated thresholds)**
+   - `scripts/canary-check.js` now supports persistent history (`logs/canary-history.jsonl` by default)
+   - Added baseline profiling logic from historical canary runs (suggested error/p95/avg thresholds)
+   - Added profile command: `npm run canary:profile`
+   - Added helper script: `scripts/canary-profile.js`
+   - Added test coverage: `test-canary-profile.js`
+   - Deployment docs updated with history/profile env controls
+
 ---
 
 ## In progress / next
 
-1. Add canary baseline profiling (auto-calibrate thresholds from historical runs)
-2. Add deploy-wrapper event sink integration (persist structured deploy events to DB)
-3. Add alert ownership drift detection (roster freshness + mismatch alerts)
+1. Add deploy-wrapper event sink integration (persist structured deploy events to DB)
+2. Add alert ownership drift detection (roster freshness + mismatch alerts)
+3. Add canary profile drift alarms (auto-notify when baseline shifts beyond tolerance)
 
 ---
 
@@ -318,6 +326,7 @@ npm run deploy:smoke:deep
 
 # Managed canary orchestration (start -> canary -> stop)
 npm run deploy:canary
+npm run canary:profile
 
 # Smoke checks (post-deploy)
 npm run smoke:check
@@ -356,6 +365,7 @@ npm run test:deploy-observability
 npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary
+npm run test:canary-profile
 npm run test:graceful
 npm run test:e2e
 ```
