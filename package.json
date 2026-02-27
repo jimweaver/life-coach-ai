@@ -14,6 +14,7 @@
     "test:scheduler": "node test-scheduler-runner.js",
     "test:guardrails": "node test-api-guardrails.js",
     "test:data": "node test-data-collector.js",
+    "test:adapter": "node test-model-adapter.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

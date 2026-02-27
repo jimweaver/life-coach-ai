@@ -1,5 +1,72 @@
+const AgentLoader = require('./agent-loader');
+const ModelAdapter = require('./model-adapter');
+
 class DomainAgents {
-  async handleCareer(input, context) {
+  constructor(options = {}) {
+    this.loader = options.loader || new AgentLoader();
+    this.modelAdapter = options.modelAdapter || new ModelAdapter();
+    this.agentConfigCache = new Map();
+  }
+
+  async getAgentConfig(domain) {
+    const domainToFolder = {
+      career: 'career-coach',
+      health: 'health-coach',
+      finance: 'finance-coach',
+      skill: 'skill-coach',
+      relationship: 'relationship-coach',
+      decision: 'decision-coach'
+    };
+
+    const folder = domainToFolder[domain];
+    if (!folder) return null;
+
+    if (this.agentConfigCache.has(folder)) {
+      return this.agentConfigCache.get(folder);
+    }
+
+    try {
+      const cfg = await this.loader.loadAgentConfig(folder);
+      this.agentConfigCache.set(folder, cfg);
+      return cfg;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  async maybeEnhanceWithModel(domain, input, context, heuristicOutput) {
+    const config = await this.getAgentConfig(domain);
+
+    const generated = await this.modelAdapter.generateDomainOutput({
+      domain,
+      input,
+      context,
+      agentConfig: config || {},
+      agentId: heuristicOutput.agent_id
+    });
+
+    if (!generated) {
+      return {
+        ...heuristicOutput,
+        metadata: {
+          ...(heuristicOutput.metadata || {}),
+          generation_mode: 'heuristic'
+        }
+      };
+    }
+
+    return {
+      ...heuristicOutput,
+      ...generated,
+      metadata: {
+        ...(heuristicOutput.metadata || {}),
+        ...(generated.metadata || {}),
+        fallback_used: false
+      }
+    };
+  }
+
+  buildCareerHeuristic(_input, context) {
     return {
       agent_id: 'career-coach',
       domain: 'career',
@@ -15,7 +82,7 @@ class DomainAgents {
     };
   }
 
-  async handleHealth(input, context) {
+  buildHealthHeuristic(_input, context) {
     return {
       agent_id: 'health-coach',
       domain: 'health',
@@ -31,7 +98,7 @@ class DomainAgents {
     };
   }
 
-  async handleFinance(input, context) {
+  buildFinanceHeuristic(_input, context) {
     return {
       agent_id: 'finance-coach',
       domain: 'finance',
@@ -47,7 +114,7 @@ class DomainAgents {
     };
   }
 
-  async handleSkill(input, context) {
+  buildSkillHeuristic(_input, context) {
     return {
       agent_id: 'skill-coach',
       domain: 'skill',
@@ -63,7 +130,7 @@ class DomainAgents {
     };
   }
 
-  async handleRelationship(input, context) {
+  buildRelationshipHeuristic(_input, context) {
     return {
       agent_id: 'relationship-coach',
       domain: 'relationship',
@@ -79,7 +146,7 @@ class DomainAgents {
     };
   }
 
-  async handleDecision(input, context) {
+  buildDecisionHeuristic(_input, context) {
     return {
       agent_id: 'decision-coach',
       domain: 'decision',
@@ -96,22 +163,29 @@ class DomainAgents {
   }
 
   async run(domain, input, context) {
-    if (domain === 'career') return this.handleCareer(input, context);
-    if (domain === 'health') return this.handleHealth(input, context);
-    if (domain === 'finance') return this.handleFinance(input, context);
-    if (domain === 'skill') return this.handleSkill(input, context);
-    if (domain === 'relationship') return this.handleRelationship(input, context);
-    if (domain === 'decision') return this.handleDecision(input, context);
-
-    return {
-      agent_id: 'general',
-      domain,
-      summary: `暫未有 ${domain} 專用處理，先提供通用建議。`,
-      recommendations: ['先澄清目標', '拆解為可執行步驟', '設定跟進節點'],
-      constraints: [],
-      confidence: 0.55,
-      metadata: {}
+    const heuristics = {
+      career: () => this.buildCareerHeuristic(input, context),
+      health: () => this.buildHealthHeuristic(input, context),
+      finance: () => this.buildFinanceHeuristic(input, context),
+      skill: () => this.buildSkillHeuristic(input, context),
+      relationship: () => this.buildRelationshipHeuristic(input, context),
+      decision: () => this.buildDecisionHeuristic(input, context)
     };
+
+    if (!heuristics[domain]) {
+      return {
+        agent_id: 'general',
+        domain,
+        summary: `暫未有 ${domain} 專用處理，先提供通用建議。`,
+        recommendations: ['先澄清目標', '拆解為可執行步驟', '設定跟進節點'],
+        constraints: [],
+        confidence: 0.55,
+        metadata: { generation_mode: 'heuristic' }
+      };
+    }
+
+    const heuristicOutput = heuristics[domain]();
+    return this.maybeEnhanceWithModel(domain, input, context, heuristicOutput);
   }
 }
 
