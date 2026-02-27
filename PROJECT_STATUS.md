@@ -171,13 +171,21 @@ Updated: 2026-02-27
    - Extended dead-letter query filters in DB helper (`getDeadLetterEvents`)
    - Added test: `test-dead-letter-bulk-replay.js`
 
+24. **Delivery retry alerting policy added (dead-letter growth escalation)**
+   - Added scheduler alert evaluation: `evaluateDeliveryAlert`
+   - Added API endpoint: `GET /jobs/delivery/alerts`
+   - Policy signals: recent dead-letter count, delivery failure rate, dead-letter growth streak
+   - Added cooldown + state tracking in Redis (`DELIVERY_ALERT_STATE_KEY`)
+   - Alert events now emit audit logs (`delivery-alert` / `delivery_alert_triggered`)
+   - Added test: `test-delivery-alerts.js`
+
 ---
 
 ## In progress / next
 
-1. Add delivery retry alerting policy (escalate repeated dead-letter growth)
-2. Add deployment automation wrapper (preflight + start)
-3. Add dead-letter replay safety policy (batch guardrails + approval mode for large replays)
+1. Add deployment automation wrapper (preflight + start)
+2. Add dead-letter replay safety policy (batch guardrails + approval mode for large replays)
+3. Add alert routing integration (pipe `delivery_alert_triggered` into cron-event/user notification flow)
 
 ---
 
@@ -209,6 +217,7 @@ npm run test:retry
 npm run test:replay
 npm run test:replay-bulk
 npm run test:quality
+npm run test:alerts
 npm run test:inline-retry
 npm run test:e2e
 ```

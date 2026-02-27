@@ -367,6 +367,38 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/delivery/alerts', async (req, res) => {
+    try {
+      const windowMinutes = Number(req.query.windowMinutes || 60);
+      const limit = Number(req.query.limit || 500);
+      const emitAudit = req.query.emitAudit === undefined
+        ? true
+        : String(req.query.emitAudit).toLowerCase() !== 'false';
+
+      if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 10080) {
+        return badRequest(res, ['windowMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
+        return badRequest(res, ['limit must be an integer between 1 and 5000']);
+      }
+
+      const result = await scheduler.evaluateDeliveryAlert({
+        windowMinutes,
+        limit,
+        emitAudit
+      });
+
+      if (!result.ok && result.reason === 'delivery_alert_not_supported') {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/jobs/run-monitor-cycle', async (req, res) => {
     try {
       const limitUsers = Number(req.body?.limitUsers || 100);

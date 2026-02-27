@@ -15,6 +15,19 @@ class SchedulerRunner {
     this.deliverMonitor = options.deliverMonitor ?? String(process.env.SCHEDULER_DELIVER_MONITOR || 'true').toLowerCase() !== 'false';
     this.deliverMorning = options.deliverMorning ?? String(process.env.SCHEDULER_DELIVER_MORNING || 'true').toLowerCase() !== 'false';
     this.inlineRetryMax = Number(options.inlineRetryMax ?? process.env.SCHEDULER_INLINE_RETRY_MAX ?? 1);
+
+    this.deliveryAlertConfig = {
+      minAttempts: Number(options.alertMinAttempts ?? process.env.DELIVERY_ALERT_MIN_ATTEMPTS ?? 3),
+      warnFailureRate: Number(options.warnFailureRate ?? process.env.DELIVERY_ALERT_WARN_FAILURE_RATE ?? 0.2),
+      criticalFailureRate: Number(options.criticalFailureRate ?? process.env.DELIVERY_ALERT_CRITICAL_FAILURE_RATE ?? 0.5),
+      warnDeadLetterRecent: Number(options.warnDeadLetterRecent ?? process.env.DELIVERY_ALERT_WARN_DEAD_LETTER ?? 3),
+      criticalDeadLetterRecent: Number(options.criticalDeadLetterRecent ?? process.env.DELIVERY_ALERT_CRITICAL_DEAD_LETTER ?? 8),
+      warnGrowthStreak: Number(options.warnGrowthStreak ?? process.env.DELIVERY_ALERT_WARN_GROWTH_STREAK ?? 2),
+      criticalGrowthStreak: Number(options.criticalGrowthStreak ?? process.env.DELIVERY_ALERT_CRITICAL_GROWTH_STREAK ?? 4),
+      cooldownMinutes: Number(options.cooldownMinutes ?? process.env.DELIVERY_ALERT_COOLDOWN_MINUTES ?? 30),
+      stateKey: options.alertStateKey ?? process.env.DELIVERY_ALERT_STATE_KEY ?? 'lifecoach:delivery-alert:state',
+      stateTtlSec: Number(options.alertStateTtlSec ?? process.env.DELIVERY_ALERT_STATE_TTL_SEC ?? 604800)
+    };
   }
 
   hasOutboxSupport() {
@@ -24,6 +37,195 @@ class SchedulerRunner {
       && typeof this.db.markOutboundEventDispatched === 'function'
       && typeof this.db.markOutboundEventFailed === 'function'
     );
+  }
+
+  hasDeliveryMetricsSupport() {
+    return Boolean(
+      this.db
+      && typeof this.db.getSchedulerDeliveryMetrics === 'function'
+      && typeof this.db.getOutboundEventStats === 'function'
+    );
+  }
+
+  async loadDeliveryAlertState() {
+    const key = this.deliveryAlertConfig.stateKey;
+
+    if (!this.db?.redis || !key) {
+      return {
+        last_dead_letter_total: 0,
+        growth_streak: 0,
+        last_alert_at_ms: 0,
+        last_alert_level: 'info'
+      };
+    }
+
+    try {
+      const raw = await this.db.redis.get(key);
+      if (!raw) {
+        return {
+          last_dead_letter_total: 0,
+          growth_streak: 0,
+          last_alert_at_ms: 0,
+          last_alert_level: 'info'
+        };
+      }
+      const parsed = JSON.parse(raw);
+      return {
+        last_dead_letter_total: Number(parsed.last_dead_letter_total || 0),
+        growth_streak: Number(parsed.growth_streak || 0),
+        last_alert_at_ms: Number(parsed.last_alert_at_ms || 0),
+        last_alert_level: parsed.last_alert_level || 'info'
+      };
+    } catch (_e) {
+      return {
+        last_dead_letter_total: 0,
+        growth_streak: 0,
+        last_alert_at_ms: 0,
+        last_alert_level: 'info'
+      };
+    }
+  }
+
+  async saveDeliveryAlertState(state) {
+    const key = this.deliveryAlertConfig.stateKey;
+    if (!this.db?.redis || !key) return;
+
+    try {
+      await this.db.redis.setex(
+        key,
+        Math.max(60, this.deliveryAlertConfig.stateTtlSec),
+        JSON.stringify(state)
+      );
+    } catch (_e) {
+      // best effort
+    }
+  }
+
+  compareAlertLevel(a, b) {
+    const rank = { info: 1, warn: 2, critical: 3 };
+    return (rank[a] || 0) - (rank[b] || 0);
+  }
+
+  async evaluateDeliveryAlert({ windowMinutes = 60, limit = 500, emitAudit = true } = {}) {
+    if (!this.hasDeliveryMetricsSupport()) {
+      return { ok: false, reason: 'delivery_alert_not_supported' };
+    }
+
+    const [logMetrics, outbox] = await Promise.all([
+      this.db.getSchedulerDeliveryMetrics({ windowMinutes, limit }),
+      this.db.getOutboundEventStats(windowMinutes)
+    ]);
+
+    const cfg = this.deliveryAlertConfig;
+    const reasons = [];
+    let level = 'info';
+
+    const raise = (newLevel, reason) => {
+      if (this.compareAlertLevel(newLevel, level) > 0) {
+        level = newLevel;
+      }
+      reasons.push(reason);
+    };
+
+    if (outbox?.recent?.dead_letter >= cfg.criticalDeadLetterRecent) {
+      raise('critical', `recent dead_letter count ${outbox.recent.dead_letter} >= ${cfg.criticalDeadLetterRecent}`);
+    } else if (outbox?.recent?.dead_letter >= cfg.warnDeadLetterRecent) {
+      raise('warn', `recent dead_letter count ${outbox.recent.dead_letter} >= ${cfg.warnDeadLetterRecent}`);
+    }
+
+    if (logMetrics?.attempted_deliveries >= cfg.minAttempts) {
+      if (logMetrics.failure_rate >= cfg.criticalFailureRate) {
+        raise('critical', `delivery failure rate ${logMetrics.failure_rate} >= ${cfg.criticalFailureRate}`);
+      } else if (logMetrics.failure_rate >= cfg.warnFailureRate) {
+        raise('warn', `delivery failure rate ${logMetrics.failure_rate} >= ${cfg.warnFailureRate}`);
+      }
+    }
+
+    const prevState = await this.loadDeliveryAlertState();
+    const deadLetterTotal = Number(outbox?.total?.dead_letter || 0);
+    const growth = Math.max(0, deadLetterTotal - Number(prevState.last_dead_letter_total || 0));
+    const growthStreak = growth > 0 ? Number(prevState.growth_streak || 0) + 1 : 0;
+
+    if (growthStreak >= cfg.criticalGrowthStreak) {
+      raise('critical', `dead-letter growth streak ${growthStreak} >= ${cfg.criticalGrowthStreak}`);
+    } else if (growthStreak >= cfg.warnGrowthStreak) {
+      raise('warn', `dead-letter growth streak ${growthStreak} >= ${cfg.warnGrowthStreak}`);
+    }
+
+    const nowMs = Date.now();
+    const cooldownMs = Math.max(0, cfg.cooldownMinutes) * 60_000;
+    const lastAlertAtMs = Number(prevState.last_alert_at_ms || 0);
+    const isHigherThanLast = this.compareAlertLevel(level, prevState.last_alert_level || 'info') > 0;
+
+    const shouldNotify = level !== 'info'
+      && (
+        lastAlertAtMs === 0
+        || (nowMs - lastAlertAtMs) >= cooldownMs
+        || isHigherThanLast
+      );
+
+    const nextState = {
+      last_dead_letter_total: deadLetterTotal,
+      growth_streak: growthStreak,
+      last_alert_at_ms: shouldNotify ? nowMs : lastAlertAtMs,
+      last_alert_level: shouldNotify ? level : (prevState.last_alert_level || 'info')
+    };
+
+    await this.saveDeliveryAlertState(nextState);
+
+    if (emitAudit && shouldNotify && typeof this.db.logAgentAction === 'function') {
+      try {
+        await this.db.logAgentAction(
+          'delivery-alert',
+          null,
+          null,
+          'delivery_alert_triggered',
+          null,
+          'success',
+          null,
+          {
+            level,
+            reasons,
+            window_minutes: windowMinutes,
+            cooldown_minutes: cfg.cooldownMinutes,
+            log_metrics: logMetrics,
+            outbox_recent: outbox?.recent,
+            outbox_total_dead_letter: deadLetterTotal,
+            growth,
+            growth_streak: growthStreak
+          }
+        );
+      } catch (_e) {
+        // best effort
+      }
+    }
+
+    return {
+      ok: true,
+      level,
+      should_notify: shouldNotify,
+      reasons,
+      metrics: {
+        log: logMetrics,
+        outbox
+      },
+      trend: {
+        dead_letter_total: deadLetterTotal,
+        previous_dead_letter_total: Number(prevState.last_dead_letter_total || 0),
+        growth,
+        growth_streak: growthStreak
+      },
+      config: {
+        min_attempts: cfg.minAttempts,
+        warn_failure_rate: cfg.warnFailureRate,
+        critical_failure_rate: cfg.criticalFailureRate,
+        warn_dead_letter_recent: cfg.warnDeadLetterRecent,
+        critical_dead_letter_recent: cfg.criticalDeadLetterRecent,
+        warn_growth_streak: cfg.warnGrowthStreak,
+        critical_growth_streak: cfg.criticalGrowthStreak,
+        cooldown_minutes: cfg.cooldownMinutes
+      }
+    };
   }
 
   async dispatchIntervention({ userId, cycle, message, severity = 'info', metadata = {} }) {
