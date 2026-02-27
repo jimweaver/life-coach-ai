@@ -49,7 +49,8 @@ async function createServer() {
   const kbiMonitor = new KBIMonitor();
   const interventionEngine = new InterventionEngine();
   const scheduler = new SchedulerRunner(db);
-  const cronDeliveryMode = scheduler?.delivery?.mode || 'none';
+  const cronDelivery = scheduler?.delivery;
+  const cronDeliveryMode = cronDelivery?.mode || 'none';
   const dataCollector = new DataCollector();
   const alertRouter = new AlertRouter({
     db,
