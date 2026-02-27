@@ -33,6 +33,8 @@
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",
     "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",
+    "smoke:check": "node scripts/smoke-check.js",
+    "smoke:deep": "node scripts/smoke-check-deep.js",
     "start:api": "node core/api-server.js"
   },
   "dependencies": {

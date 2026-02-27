@@ -205,13 +205,21 @@ Updated: 2026-02-27
      - `test-delivery-alerts.js` validates scheduler-native routing path
      - `test-alert-routing.js` validates AlertRouter fallback path
 
+28. **Deployment docs hardening (rollback + smoke-check playbook)**
+   - Added operations doc: `docs/DEPLOYMENT_OPERATIONS.md`
+   - Added smoke check scripts:
+     - `npm run smoke:check` — quick health + services check
+     - `npm run smoke:deep` — extended checks (DB roundtrip, key endpoints)
+   - Added rollback procedures for common failure scenarios
+   - Added env variables reference for operational tuning
+
 ---
 
 ## In progress / next
 
-1. Add deployment docs hardening (rollback + smoke-check playbook)
-2. Add dead-letter replay policy ops controls (allowlist/role-based approval strategy)
-3. Add alert routing policy controls (destination strategy + escalation channels)
+1. Add dead-letter replay policy ops controls (allowlist/role-based approval strategy)
+2. Add alert routing policy controls (destination strategy + escalation channels)
+3. Add production readiness checklist (observability + graceful shutdown hardening)
 
 ---
 
@@ -221,6 +229,10 @@ Updated: 2026-02-27
 # API
 npm run deploy:preflight
 npm run deploy:up
+
+# Smoke checks (post-deploy)
+npm run smoke:check
+npm run smoke:deep
 
 # Tests
 npm run test:db
