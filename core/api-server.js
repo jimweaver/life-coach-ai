@@ -1156,6 +1156,97 @@ async function createServer() {
     });
   });
 
+  // Skill-learning analytics endpoint
+  app.get('/analytics/skill-learning', async (_req, res) => {
+    try {
+      const days = Math.min(30, Math.max(1, parseInt(_req.query.days || '7', 10)));
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+      // Query for skill-learning interactions from database
+      const query = `
+        SELECT 
+          DATE(created_at) as date,
+          COUNT(*) as total_interactions,
+          COUNT(DISTINCT user_id) as unique_users,
+          COUNT(CASE WHEN agent_id = 'skill-learning' THEN 1 END) as skill_learning_count
+        FROM messages
+        WHERE created_at >= $1
+          AND (agent_id = 'skill-learning' OR content ILIKE '%skill%')
+        GROUP BY DATE(created_at)
+        ORDER BY date DESC
+      `;
+
+      let dailyStats = [];
+      let totalSkillLearning = 0;
+      let uniqueSkillUsers = new Set();
+
+      try {
+        const result = await db.query?.(query, [since]) || { rows: [] };
+        dailyStats = result.rows || [];
+        totalSkillLearning = dailyStats.reduce((sum, r) => sum + (parseInt(r.skill_learning_count) || 0), 0);
+      } catch (dbErr) {
+        // Database might not have query method or table structure different
+        console.log('[SkillLearning Analytics] DB query failed, returning empty stats:', dbErr.message);
+      }
+
+      // Get top skill keywords from recent interactions
+      const keywordsQuery = `
+        SELECT content 
+        FROM messages 
+        WHERE created_at >= $1 
+          AND agent_id = 'skill-learning'
+        ORDER BY created_at DESC
+        LIMIT 100
+      `;
+
+      let topKeywords = [];
+      try {
+        const kwResult = await db.query?.(keywordsQuery, [since]) || { rows: [] };
+        const content = kwResult.rows?.map(r => r.content).join(' ') || '';
+        
+        // Extract common skill-related keywords
+        const keywordMatches = content.match(/\b(gmail|slack|email|calendar|todo|weather|pdf|notion|github|api|webhook|notification|reminder|search|send|create)\b/gi) || [];
+        const keywordCounts = {};
+        keywordMatches.forEach(kw => {
+          const lower = kw.toLowerCase();
+          keywordCounts[lower] = (keywordCounts[lower] || 0) + 1;
+        });
+        
+        topKeywords = Object.entries(keywordCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([word, count]) => ({ word, count }));
+      } catch (dbErr) {
+        // Ignore keyword extraction errors
+      }
+
+      res.json({
+        ok: true,
+        period: {
+          days,
+          since
+        },
+        summary: {
+          total_skill_learning_interactions: totalSkillLearning,
+          daily_interactions: dailyStats.map(r => ({
+            date: r.date,
+            total: parseInt(r.total_interactions) || 0,
+            skill_learning: parseInt(r.skill_learning_count) || 0,
+            unique_users: parseInt(r.unique_users) || 0
+          })),
+          top_keywords: topKeywords
+        },
+        generated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('[SkillLearning Analytics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   app.post('/chat', async (req, res) => {
     try {
       const errors = validateChatPayload(req.body);

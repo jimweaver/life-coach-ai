@@ -636,13 +636,22 @@ Updated: 2026-02-27
    - Automatic cleanup of old connection entries when map exceeds 10,000 entries
    - Graceful shutdown test passes with new metrics
 
+69. **Skill-learning analytics endpoint**
+   - Added `GET /analytics/skill-learning` endpoint to API server
+   - Query parameter `days` (1-30, default 7) for period selection
+   - Returns daily interaction stats (total, skill-learning count, unique users)
+   - Extracts and returns top keywords from skill-learning content
+   - Handles database query failures gracefully (returns empty stats)
+   - Added test: `test-skill-learning-analytics.js`
+   - Added npm script: `test:skill-learning-analytics`
+
 ---
 
 ## In progress / next
 
-1. Add skill-learning analytics endpoint
-2. Add connection pool monitoring
-3. Add health check endpoint extensions for deep checks
+1. Add connection pool monitoring
+2. Add health check endpoint extensions for deep checks
+3. Add orchestrator performance metrics endpoint
 
 ---
 
