@@ -52,6 +52,8 @@ async function createServer() {
   const canaryDriftDetector = new CanaryDriftDetector();
 
   const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+  const canaryDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+
   const ownershipDriftRoutingPolicy = {
     routeEnabled: String(process.env.ALERT_OWNER_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
     routeMinLevel: String(process.env.ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL || 'critical').toLowerCase(),
@@ -62,7 +64,23 @@ async function createServer() {
     suppressionStateTtlSec: Number(process.env.ALERT_OWNER_DRIFT_STATE_TTL_SEC || 604800)
   };
 
+  const canaryDriftRoutingPolicy = {
+    routeEnabled: String(process.env.CANARY_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+    routeMinLevel: String(process.env.CANARY_DRIFT_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
+    suppressionEnabled: String(process.env.CANARY_DRIFT_SUPPRESSION_ENABLED || 'true').toLowerCase() !== 'false',
+    suppressionCooldownMinutes: Number(process.env.CANARY_DRIFT_COOLDOWN_MINUTES || 30),
+    suppressionDuplicateWindowMinutes: Number(process.env.CANARY_DRIFT_DUPLICATE_WINDOW_MINUTES || 180),
+    suppressionStateKey: process.env.CANARY_DRIFT_STATE_KEY || 'lifecoach:canary-drift:route-state',
+    suppressionStateTtlSec: Number(process.env.CANARY_DRIFT_STATE_TTL_SEC || 604800)
+  };
+
   let ownershipDriftRouteStateMemory = {
+    last_routed_at_ms: 0,
+    last_signature: null,
+    last_level: 'info'
+  };
+
+  let canaryDriftRouteStateMemory = {
     last_routed_at_ms: 0,
     last_signature: null,
     last_level: 'info'
@@ -314,6 +332,135 @@ async function createServer() {
     };
   };
 
+  const buildCanaryDriftSignature = (drift) => {
+    const level = String(drift?.level || 'info').toLowerCase();
+    const reasons = Array.isArray(drift?.reasons)
+      ? [...drift.reasons].map((r) => String(r).toLowerCase()).sort().join('|')
+      : '';
+
+    const delta = drift?.drift_delta || {};
+    const keys = ['max_error_rate', 'max_p95_ms', 'max_avg_ms'];
+    const deltaPart = keys
+      .map((k) => {
+        const value = Number(delta[k]);
+        return Number.isFinite(value) ? `${k}:${value.toFixed(4)}` : `${k}:na`;
+      })
+      .join('|');
+
+    return `${level}:${reasons}:${deltaPart}`;
+  };
+
+  const loadCanaryDriftRouteState = async () => {
+    const key = canaryDriftRoutingPolicy.suppressionStateKey;
+
+    if (db.redis && key) {
+      try {
+        const raw = await db.redis.get(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return {
+            last_routed_at_ms: Number(parsed.last_routed_at_ms || 0),
+            last_signature: parsed.last_signature || null,
+            last_level: String(parsed.last_level || 'info').toLowerCase()
+          };
+        }
+      } catch (_e) {
+        // fallback to memory state
+      }
+    }
+
+    return { ...canaryDriftRouteStateMemory };
+  };
+
+  const saveCanaryDriftRouteState = async (state) => {
+    canaryDriftRouteStateMemory = {
+      last_routed_at_ms: Number(state?.last_routed_at_ms || 0),
+      last_signature: state?.last_signature || null,
+      last_level: String(state?.last_level || 'info').toLowerCase()
+    };
+
+    const key = canaryDriftRoutingPolicy.suppressionStateKey;
+    if (db.redis && key) {
+      try {
+        await db.redis.setex(
+          key,
+          Math.max(60, canaryDriftRoutingPolicy.suppressionStateTtlSec),
+          JSON.stringify(canaryDriftRouteStateMemory)
+        );
+      } catch (_e) {
+        // best effort
+      }
+    }
+  };
+
+  const evaluateCanaryDriftSuppression = async (drift) => {
+    const policy = canaryDriftRoutingPolicy;
+
+    if (!policy.suppressionEnabled) {
+      return {
+        enabled: false,
+        suppressed: false,
+        reason: null,
+        signature: buildCanaryDriftSignature(drift),
+        state: await loadCanaryDriftRouteState()
+      };
+    }
+
+    const state = await loadCanaryDriftRouteState();
+    const nowMs = Date.now();
+    const signature = buildCanaryDriftSignature(drift);
+    const currentLevel = String(drift?.level || 'info').toLowerCase();
+    const currentRank = canaryDriftLevelRank[currentLevel] || 1;
+    const lastRank = canaryDriftLevelRank[state.last_level] || 1;
+
+    const duplicateWindowMs = Math.max(0, policy.suppressionDuplicateWindowMinutes) * 60_000;
+    const cooldownMs = Math.max(0, policy.suppressionCooldownMinutes) * 60_000;
+
+    const sinceLastMs = state.last_routed_at_ms > 0
+      ? Math.max(0, nowMs - state.last_routed_at_ms)
+      : null;
+
+    const duplicateWithinWindow = state.last_signature
+      && state.last_signature === signature
+      && sinceLastMs !== null
+      && sinceLastMs < duplicateWindowMs;
+
+    const cooldownActive = sinceLastMs !== null
+      && sinceLastMs < cooldownMs
+      && currentRank <= lastRank;
+
+    if (duplicateWithinWindow) {
+      return {
+        enabled: true,
+        suppressed: true,
+        reason: 'duplicate_within_window',
+        signature,
+        remaining_ms: Math.max(0, duplicateWindowMs - sinceLastMs),
+        state
+      };
+    }
+
+    if (cooldownActive) {
+      return {
+        enabled: true,
+        suppressed: true,
+        reason: 'cooldown_active',
+        signature,
+        remaining_ms: Math.max(0, cooldownMs - sinceLastMs),
+        state
+      };
+    }
+
+    return {
+      enabled: true,
+      suppressed: false,
+      reason: null,
+      signature,
+      remaining_ms: 0,
+      state
+    };
+  };
+
   const normalizeClientPart = (value) => {
     const raw = Array.isArray(value) ? value[0] : value;
     const base = String(raw || 'unknown').split(',')[0].trim();
@@ -444,8 +591,12 @@ async function createServer() {
         owner_drift_suppression_state_key_configured: !!ownershipDriftRoutingPolicy.suppressionStateKey
       },
       canary_drift_policy: {
-        route_enabled: String(process.env.CANARY_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
-        route_min_level: String(process.env.CANARY_DRIFT_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
+        route_enabled: canaryDriftRoutingPolicy.routeEnabled,
+        route_min_level: canaryDriftRoutingPolicy.routeMinLevel,
+        suppression_enabled: canaryDriftRoutingPolicy.suppressionEnabled,
+        suppression_cooldown_minutes: canaryDriftRoutingPolicy.suppressionCooldownMinutes,
+        suppression_duplicate_window_minutes: canaryDriftRoutingPolicy.suppressionDuplicateWindowMinutes,
+        suppression_state_key_configured: !!canaryDriftRoutingPolicy.suppressionStateKey,
         warn_ratio: Number(process.env.CANARY_DRIFT_WARN_RATIO || 0.25),
         critical_ratio: Number(process.env.CANARY_DRIFT_CRITICAL_RATIO || 0.5),
         profile_min_samples: Number(process.env.CANARY_PROFILE_MIN_SAMPLES || 5),
@@ -1130,15 +1281,19 @@ async function createServer() {
       }
 
       const routeEnabled = req.query.route === undefined
-        ? String(process.env.CANARY_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false'
+        ? canaryDriftRoutingPolicy.routeEnabled
         : String(req.query.route).toLowerCase() !== 'false';
 
       const emitAudit = req.query.emitAudit === undefined
         ? true
         : String(req.query.emitAudit).toLowerCase() !== 'false';
 
-      const routeMinLevel = String(process.env.CANARY_DRIFT_ROUTE_MIN_LEVEL || 'warn').toLowerCase();
-      const levelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+      const suppressionEnabled = req.query.suppress === undefined
+        ? canaryDriftRoutingPolicy.suppressionEnabled
+        : String(req.query.suppress).toLowerCase() !== 'false';
+
+      const routeMinLevel = canaryDriftRoutingPolicy.routeMinLevel;
+      const levelRank = canaryDriftLevelRank;
 
       const resolvedHistoryFile = resolveHistoryFile({ historyFile });
       const history = await loadHistory(resolvedHistoryFile);
@@ -1158,9 +1313,35 @@ async function createServer() {
       });
 
       let routed = null;
-      const shouldRoute = routeEnabled
+      const routeCandidate = routeEnabled
         && drift.should_notify
         && (levelRank[drift.level] || 1) >= (levelRank[routeMinLevel] || 2);
+
+      let suppression = {
+        enabled: false,
+        suppressed: false,
+        reason: null,
+        signature: null,
+        remaining_ms: 0,
+        state: { ...canaryDriftRouteStateMemory }
+      };
+
+      if (routeCandidate) {
+        if (suppressionEnabled) {
+          suppression = await evaluateCanaryDriftSuppression(drift);
+        } else {
+          suppression = {
+            enabled: false,
+            suppressed: false,
+            reason: null,
+            signature: buildCanaryDriftSignature(drift),
+            remaining_ms: 0,
+            state: await loadCanaryDriftRouteState()
+          };
+        }
+      }
+
+      const shouldRoute = routeCandidate && !suppression.suppressed;
 
       if (shouldRoute) {
         const alert = {
@@ -1185,6 +1366,14 @@ async function createServer() {
         };
 
         routed = await alertRouter.routeDeliveryAlert(alert);
+
+        if (routed?.routed) {
+          await saveCanaryDriftRouteState({
+            last_routed_at_ms: Date.now(),
+            last_signature: suppression.signature || buildCanaryDriftSignature(drift),
+            last_level: String(drift.level || 'info').toLowerCase()
+          });
+        }
       }
 
       if (emitAudit && drift.drift_detected) {
@@ -1202,9 +1391,29 @@ async function createServer() {
               active_thresholds: activeThresholds,
               route_enabled: routeEnabled,
               route_min_level: routeMinLevel,
+              route_candidate: routeCandidate,
+              suppression,
               routed
             }
           );
+
+          if (routeCandidate && suppression.suppressed) {
+            await db.logAgentAction(
+              'canary-monitor',
+              null,
+              null,
+              'canary_profile_drift_route_suppressed',
+              null,
+              'success',
+              null,
+              {
+                drift,
+                suppression,
+                route_enabled: routeEnabled,
+                route_min_level: routeMinLevel
+              }
+            );
+          }
         } catch (_e) {
           // best effort
         }
@@ -1219,7 +1428,9 @@ async function createServer() {
         route: {
           enabled: routeEnabled,
           min_level: routeMinLevel,
-          attempted: !!shouldRoute
+          candidate: !!routeCandidate,
+          attempted: !!shouldRoute,
+          suppression
         },
         routed
       });

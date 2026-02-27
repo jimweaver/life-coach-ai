@@ -115,8 +115,16 @@ Drift thresholds:
 - `CANARY_DRIFT_WARN_RATIO` (default: `0.25`)
 - `CANARY_DRIFT_CRITICAL_RATIO` (default: `0.5`)
 
-Audit signal:
+Drift route suppression controls:
+- `CANARY_DRIFT_SUPPRESSION_ENABLED` (default: `true`)
+- `CANARY_DRIFT_COOLDOWN_MINUTES` (default: `30`)
+- `CANARY_DRIFT_DUPLICATE_WINDOW_MINUTES` (default: `180`)
+- `CANARY_DRIFT_STATE_KEY` (default: `lifecoach:canary-drift:route-state`)
+- `CANARY_DRIFT_STATE_TTL_SEC` (default: `604800`)
+
+Audit signals:
 - `agent_logs.action = canary_profile_drift_detected`
+- `agent_logs.action = canary_profile_drift_route_suppressed`
 
 ### Deploy-wrapper observability hooks
 

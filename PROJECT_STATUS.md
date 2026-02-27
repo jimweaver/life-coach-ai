@@ -385,13 +385,26 @@ Updated: 2026-02-27
    - Added coverage: `test-alert-ownership-drift-suppression.js`
    - Governance docs updated with suppression policy verification
 
+46. **Canary drift auto-suppression controls added (duplicate drift paging guard)**
+   - `GET /jobs/canary/drift` now supports route suppression via `suppress=true|false`
+   - Added canary suppression env controls:
+     - `CANARY_DRIFT_SUPPRESSION_ENABLED`
+     - `CANARY_DRIFT_COOLDOWN_MINUTES`
+     - `CANARY_DRIFT_DUPLICATE_WINDOW_MINUTES`
+     - `CANARY_DRIFT_STATE_KEY`
+   - Drift route now suppresses duplicate paging during cooldown/duplicate windows
+   - Emits audit signal: `canary_profile_drift_route_suppressed`
+   - `/health` now exposes canary drift suppression policy snapshot
+   - Added coverage: `test-canary-drift-suppression.js`
+   - Deployment ops docs updated with canary suppression policy controls
+
 ---
 
 ## In progress / next
 
-1. Add canary drift auto-suppression controls (prevent duplicate drift paging within cooldown)
-2. Add deploy trend anomaly detector (spike/latency failure regression alerts)
-3. Add ownership drift suppression observability endpoint (state + cooldown remaining)
+1. Add deploy trend anomaly detector (spike/latency failure regression alerts)
+2. Add ownership drift suppression observability endpoint (state + cooldown remaining)
+3. Add canary drift suppression observability endpoint (state + cooldown remaining)
 
 ---
 
@@ -456,6 +469,7 @@ npm run test:canary
 npm run test:canary-profile
 npm run test:canary-drift
 npm run test:canary-drift-trend
+npm run test:canary-drift-suppression
 npm run test:graceful
 npm run test:e2e
 ```
