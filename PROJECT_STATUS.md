@@ -617,13 +617,23 @@ Updated: 2026-02-27
    - Added npm script: `test:orchestrator-skill-learning`
    - All tests pass (normal flow, English/Chinese detection, persistence)
 
+67. **Managed smoke orchestration stress test coverage**
+   - Added `test-smoke-stress.js` for testing deploy wrapper under load
+   - Tests concurrent/sequential deploy-smoke cycles
+   - Tracks event flow: api.start → ready.wait.end → smoke.start → smoke.end → api.stop → wrapper.end
+   - Measures timing: API startup, smoke duration, total duration
+   - Reports success rate, error counts, timing statistics
+   - Pass/fail criteria: 80% success rate, <2min avg duration, <5 errors/run
+   - Added npm script: `test:smoke-stress`
+   - Configurable via env vars: STRESS_CONCURRENT_RUNS, STRESS_SMOKE_DEPTH, STRESS_TIMEOUT_MS
+
 ---
 
 ## In progress / next
 
-1. Add managed smoke orchestration stress test coverage
-2. Continue production readiness hardening (connection draining metrics)
-3. Add skill-learning analytics endpoint
+1. Continue production readiness hardening (connection draining metrics)
+2. Add skill-learning analytics endpoint
+3. Add connection pool monitoring
 
 ---
 

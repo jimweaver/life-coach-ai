@@ -66,6 +66,7 @@
     "test:graceful": "node test-graceful-shutdown.js",
     "test:skill-learning": "node test-skill-learning.js",
     "test:orchestrator-skill-learning": "node test-orchestrator-skill-learning.js",
+    "test:smoke-stress": "node test-smoke-stress.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",
     "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",
