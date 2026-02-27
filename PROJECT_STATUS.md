@@ -303,13 +303,21 @@ Updated: 2026-02-27
    - Added test coverage: `test-canary-profile.js`
    - Deployment docs updated with history/profile env controls
 
+38. **Deploy-wrapper event sink integration added (DB persistence)**
+   - Added sink module: `scripts/deploy-event-sink.js`
+   - Wrapper events now optionally persist to PostgreSQL table `deploy_run_events`
+   - Captures run-level structured events with `run_id`, `event`, `level`, timestamps, and payload JSON
+   - Event sink mode controlled by `DEPLOY_WRAPPER_EVENT_SINK` (`postgres|none`)
+   - Added coverage: `test-deploy-event-sink.js`
+   - Wrapper now flushes sink writes before exit to reduce log loss risk
+
 ---
 
 ## In progress / next
 
-1. Add deploy-wrapper event sink integration (persist structured deploy events to DB)
-2. Add alert ownership drift detection (roster freshness + mismatch alerts)
-3. Add canary profile drift alarms (auto-notify when baseline shifts beyond tolerance)
+1. Add alert ownership drift detection (roster freshness + mismatch alerts)
+2. Add canary profile drift alarms (auto-notify when baseline shifts beyond tolerance)
+3. Add deploy event analytics endpoint (query deploy_run_events by run/time/event)
 
 ---
 
@@ -362,6 +370,7 @@ npm run test:alert-ownership
 npm run test:inline-retry
 npm run test:deploy
 npm run test:deploy-observability
+npm run test:deploy-sink
 npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary

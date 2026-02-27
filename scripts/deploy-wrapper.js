@@ -2,14 +2,18 @@
 
 const path = require('path');
 const { spawn } = require('child_process');
+const { v4: uuidv4 } = require('uuid');
+const DeployEventSink = require('./deploy-event-sink');
 
-function createDeployLogger() {
+function createDeployLogger({ sink = null, runId = null } = {}) {
   const format = String(process.env.DEPLOY_WRAPPER_LOG_FORMAT || 'text').toLowerCase();
   const json = format === 'json';
+  const pending = [];
 
   const emit = (level, event, details = {}) => {
     const payload = {
       component: 'deploy-wrapper',
+      run_id: runId,
       level,
       event,
       ts: new Date().toISOString(),
@@ -18,18 +22,32 @@ function createDeployLogger() {
 
     if (json) {
       console.log(JSON.stringify(payload));
-      return;
+    } else {
+      const icon = level === 'error' ? '❌' : 'ℹ️';
+      const detailText = Object.keys(details).length ? ` ${JSON.stringify(details)}` : '';
+      console.log(`${icon} [deploy-wrapper] ${event}${detailText}`);
     }
 
-    const icon = level === 'error' ? '❌' : 'ℹ️';
-    const detailText = Object.keys(details).length ? ` ${JSON.stringify(details)}` : '';
-    console.log(`${icon} [deploy-wrapper] ${event}${detailText}`);
+    if (sink && typeof sink.write === 'function') {
+      const p = Promise.resolve()
+        .then(() => sink.write(payload))
+        .catch(() => null);
+      pending.push(p);
+    }
+
+    return payload;
   };
 
   return {
     json,
+    runId,
     info: (event, details) => emit('info', event, details),
-    error: (event, details) => emit('error', event, details)
+    error: (event, details) => emit('error', event, details),
+    flush: async () => {
+      if (!pending.length) return;
+      const batch = pending.splice(0, pending.length);
+      await Promise.allSettled(batch);
+    }
   };
 }
 
@@ -173,7 +191,32 @@ async function runScriptStep({ logger, step, scriptPath, args = [] }) {
 
 async function run() {
   const startedAt = Date.now();
-  const logger = createDeployLogger();
+  const runId = uuidv4();
+
+  const sink = new DeployEventSink({ runId });
+  const logger = createDeployLogger({ sink, runId });
+
+  const gracefulExit = async ({ code, event, details = {} }) => {
+    if (event) {
+      if (code === 0) {
+        logger.info(event, {
+          code,
+          total_ms: Date.now() - startedAt,
+          ...details
+        });
+      } else {
+        logger.error(event, {
+          code,
+          total_ms: Date.now() - startedAt,
+          ...details
+        });
+      }
+    }
+
+    await logger.flush();
+    await sink.close();
+    process.exit(code);
+  };
 
   const args = process.argv.slice(2);
   const checkOnly = args.includes('--check-only');
@@ -199,7 +242,8 @@ async function run() {
     smoke_plan: smokePlan,
     canary_plan: canaryPlan,
     managed_checks_enabled: managedChecksEnabled,
-    profile: profilePath || null
+    profile: profilePath || null,
+    event_sink: sink.status()
   });
 
   const checkScript = path.join(__dirname, 'deployment-check.js');
@@ -225,12 +269,11 @@ async function run() {
       if (!logger.json) {
         console.error('❌ Preflight failed. API startup aborted.');
       }
-      logger.error('wrapper.abort', {
-        reason: 'preflight_failed',
-        exit_code: preflight.code,
-        total_ms: Date.now() - startedAt
+      return gracefulExit({
+        code: preflight.code,
+        event: 'wrapper.abort',
+        details: { reason: 'preflight_failed' }
       });
-      process.exit(preflight.code);
     }
 
     if (!logger.json) {
@@ -242,10 +285,10 @@ async function run() {
     if (!logger.json) {
       console.log('🧪 deploy-wrapper finished in check-only mode.');
     }
-    logger.info('check_only.complete', {
-      total_ms: Date.now() - startedAt
+    return gracefulExit({
+      code: 0,
+      event: 'check_only.complete'
     });
-    process.exit(0);
   }
 
   if (!logger.json) {
@@ -265,23 +308,24 @@ async function run() {
     process.on('SIGTERM', () => forward('SIGTERM'));
 
     api.on('close', (code, signal) => {
-      logger.info('api.exit', {
+      void gracefulExit({
         code: code ?? 0,
-        signal: signal || null,
-        total_ms: Date.now() - startedAt
+        event: 'api.exit',
+        details: { signal: signal || null }
       });
-      process.exit(code ?? 0);
     });
 
     api.on('error', (err) => {
       logger.error('api.error', {
-        error: err.message,
-        total_ms: Date.now() - startedAt
+        error: err.message
       });
       if (!logger.json) {
         console.error('❌ Failed to start API:', err.message);
       }
-      process.exit(1);
+      void gracefulExit({
+        code: 1,
+        event: null
+      });
     });
 
     return;
@@ -316,17 +360,17 @@ async function run() {
       if (!logger.json) {
         console.error('❌ API did not become ready in time for managed checks.');
       }
-      logger.error('wrapper.abort', {
-        reason: 'api_not_ready',
-        total_ms: Date.now() - startedAt
-      });
 
       const stopStarted = Date.now();
       logger.info('api.stop.start', { reason: 'api_not_ready' });
       await stopApi(api, { stopTimeoutMs });
       logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
 
-      process.exit(1);
+      return gracefulExit({
+        code: 1,
+        event: 'wrapper.abort',
+        details: { reason: 'api_not_ready' }
+      });
     }
 
     if (smokeEnabled) {
@@ -349,19 +393,19 @@ async function run() {
             console.error(`❌ Smoke step failed: ${step}`);
           }
 
-          logger.error('wrapper.abort', {
-            reason: 'smoke_failed',
-            smoke_step: step,
-            exit_code: smokeStep.code,
-            total_ms: Date.now() - startedAt
-          });
-
           const stopStarted = Date.now();
           logger.info('api.stop.start', { reason: 'smoke_failed' });
           await stopApi(api, { stopTimeoutMs });
           logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
 
-          process.exit(smokeStep.code);
+          return gracefulExit({
+            code: smokeStep.code,
+            event: 'wrapper.abort',
+            details: {
+              reason: 'smoke_failed',
+              smoke_step: step
+            }
+          });
         }
       }
 
@@ -390,19 +434,19 @@ async function run() {
             console.error(`❌ Canary step failed: ${step}`);
           }
 
-          logger.error('wrapper.abort', {
-            reason: 'canary_failed',
-            canary_step: step,
-            exit_code: canaryStep.code,
-            total_ms: Date.now() - startedAt
-          });
-
           const stopStarted = Date.now();
           logger.info('api.stop.start', { reason: 'canary_failed' });
           await stopApi(api, { stopTimeoutMs });
           logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
 
-          process.exit(canaryStep.code);
+          return gracefulExit({
+            code: canaryStep.code,
+            event: 'wrapper.abort',
+            details: {
+              reason: 'canary_failed',
+              canary_step: step
+            }
+          });
         }
       }
 
@@ -421,22 +465,21 @@ async function run() {
     await stopApi(api, { stopTimeoutMs });
     logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
 
-    logger.info('wrapper.complete', {
-      ok: true,
-      total_ms: Date.now() - startedAt,
-      smoke_plan: smokePlan,
-      canary_plan: canaryPlan
+    return gracefulExit({
+      code: 0,
+      event: 'wrapper.complete',
+      details: {
+        smoke_plan: smokePlan,
+        canary_plan: canaryPlan
+      }
     });
-
-    process.exit(0);
   } catch (err) {
     if (!logger.json) {
       console.error('❌ deploy-wrapper managed mode fatal:', err.message);
     }
 
     logger.error('wrapper.fatal', {
-      error: err.message,
-      total_ms: Date.now() - startedAt
+      error: err.message
     });
 
     const stopStarted = Date.now();
@@ -444,7 +487,10 @@ async function run() {
     await stopApi(api, { stopTimeoutMs });
     logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
 
-    process.exit(1);
+    return gracefulExit({
+      code: 1,
+      event: null
+    });
   }
 }
 

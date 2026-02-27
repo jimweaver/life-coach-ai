@@ -34,6 +34,7 @@
     "test:inline-retry": "node test-inline-dispatch-retry.js",
     "test:deploy": "node test-deploy-wrapper.js",
     "test:deploy-observability": "node test-deploy-observability.js",
+    "test:deploy-sink": "node test-deploy-event-sink.js",
     "test:deploy-smoke": "node test-deploy-smoke-wrapper.js",
     "test:deploy-canary": "node test-deploy-canary-wrapper.js",
     "test:canary": "node test-canary-check.js",

@@ -102,6 +102,29 @@ Example events:
 
 Each event includes `ts` and timing fields like `duration_ms` / `total_ms` when applicable.
 
+### Deploy event sink (DB persistence)
+
+Wrapper events can be persisted to PostgreSQL for deployment analytics.
+
+- Enable sink: `DEPLOY_WRAPPER_EVENT_SINK=postgres`
+- Disable sink: `DEPLOY_WRAPPER_EVENT_SINK=none`
+- Table name: `DEPLOY_WRAPPER_EVENT_TABLE` (default: `deploy_run_events`)
+- Source label: `DEPLOY_WRAPPER_EVENT_SOURCE` (default: `deploy-wrapper`)
+
+Stored event fields:
+- `run_id`
+- `source`
+- `level`
+- `event`
+- `event_ts`
+- `payload` (JSONB)
+
+Validation:
+
+```bash
+npm run test:deploy-sink
+```
+
 ---
 
 ## Rollback Procedures
@@ -187,6 +210,9 @@ Each event includes `ts` and timing fields like `duration_ms` / `total_ms` when 
 | `DEPLOY_WRAPPER_READY_TIMEOUT_MS` | 20000 | Max wait for `/ready` in managed modes |
 | `DEPLOY_WRAPPER_READY_INTERVAL_MS` | 500 | Poll interval for `/ready` |
 | `DEPLOY_WRAPPER_STOP_TIMEOUT_MS` | 10000 | Max wait before force-stopping API child |
+| `DEPLOY_WRAPPER_EVENT_SINK` | postgres | Deploy event sink mode (`postgres` or `none`) |
+| `DEPLOY_WRAPPER_EVENT_TABLE` | deploy_run_events | Deploy event sink table name |
+| `DEPLOY_WRAPPER_EVENT_SOURCE` | deploy-wrapper | Source label written to event sink |
 
 ---
 

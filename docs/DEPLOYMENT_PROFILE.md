@@ -87,3 +87,7 @@ Wrapper script:
   - `none` | `redis` | `webhook`
 - Inline dispatch retry is controlled by:
   - `SCHEDULER_INLINE_RETRY_MAX`
+- Deploy wrapper event sink (structured deploy events to DB):
+  - `DEPLOY_WRAPPER_EVENT_SINK=postgres|none`
+  - `DEPLOY_WRAPPER_EVENT_TABLE=deploy_run_events`
+  - `DEPLOY_WRAPPER_EVENT_SOURCE=deploy-wrapper`
