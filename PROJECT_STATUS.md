@@ -129,13 +129,27 @@ Updated: 2026-02-27
    - Scheduler cycle summaries now include outbox counters + event ids/status
    - Added integration test: `test-outbox-flow.js`
 
+18. **Delivery retry/backoff + dead-letter handling completed**
+   - `CronEventDelivery.deliverWithRetry` with exponential backoff + full jitter
+   - `SchedulerRunner.runRetryCycle` picks failed outbox events, re-delivers, dead-letters exhausted
+   - DB helpers: `getRetryableEvents`, `incrementRetryCount`, `markOutboundEventDeadLetter`, `getDeadLetterEvents`
+   - API endpoints: `POST /jobs/run-retry-cycle`, `GET /jobs/dead-letter`
+   - Outbox index: `idx_outbound_events_retry` on `(status, next_retry_at)` for failed events
+   - Test: `test-delivery-retry.js` (12 tests)
+
+19. **Data-collector quality telemetry API added**
+   - `GET /data-quality/probe?domain=...&input=...` — on-demand quality snapshot (quality block + citations + confidence)
+   - `GET /data-quality/domains` — lists supported domains + data-collector config (max_source_age, dedupe, brave status)
+   - Validation: domain enum check, input length bounds
+   - Test: `test-data-quality-api.js` (8 tests)
+
 ---
 
 ## In progress / next
 
-1. Add delivery retry/backoff + dead-letter handling for cron-event transport
-2. Add data-collector quality telemetry endpoint/reporting (surface quality block via API)
-3. Prepare deployment profile (OpenClaw-hosted + local DB)
+1. Prepare deployment profile (OpenClaw-hosted + local DB)
+2. Add dead-letter replay endpoint (`POST /jobs/dead-letter/:eventId/replay`)
+3. Wire `dispatchIntervention` to use `deliverWithRetry` (currently single-attempt; retry deferred to runRetryCycle)
 
 ---
 
@@ -162,5 +176,7 @@ npm run test:metrics
 npm run test:outbox
 npm run test:delivery
 npm run test:scheduler-delivery
+npm run test:retry
+npm run test:quality
 npm run test:e2e
 ```
