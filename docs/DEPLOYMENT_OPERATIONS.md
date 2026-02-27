@@ -71,6 +71,21 @@ Rollback recommendation is triggered when one of these thresholds is exceeded:
 
 The canary result is printed as JSON and exits non-zero on rollback recommendation.
 
+### Deploy-wrapper observability hooks
+
+Set `DEPLOY_WRAPPER_LOG_FORMAT=json` to emit structured JSON events with step durations.
+
+Example events:
+- `wrapper.start`
+- `preflight.start` / `preflight.end`
+- `ready.wait.start` / `ready.wait.end`
+- `smoke.quick.start` / `smoke.quick.end`
+- `canary.traffic.start` / `canary.traffic.end`
+- `api.stop.start` / `api.stop.end`
+- `wrapper.complete`
+
+Each event includes `ts` and timing fields like `duration_ms` / `total_ms` when applicable.
+
 ---
 
 ## Rollback Procedures
@@ -147,6 +162,10 @@ The canary result is printed as JSON and exits non-zero on rollback recommendati
 | `CANARY_MAX_ERROR_RATE` | 0.2 | Rollback threshold for failed request ratio |
 | `CANARY_P95_MAX_MS` | 3500 | Rollback threshold for p95 latency |
 | `CANARY_AVG_MAX_MS` | 2200 | Rollback threshold for average latency |
+| `DEPLOY_WRAPPER_LOG_FORMAT` | text | Wrapper log format (`text` or `json`) |
+| `DEPLOY_WRAPPER_READY_TIMEOUT_MS` | 20000 | Max wait for `/ready` in managed modes |
+| `DEPLOY_WRAPPER_READY_INTERVAL_MS` | 500 | Poll interval for `/ready` |
+| `DEPLOY_WRAPPER_STOP_TIMEOUT_MS` | 10000 | Max wait before force-stopping API child |
 
 ---
 

@@ -3,6 +3,36 @@
 const path = require('path');
 const { spawn } = require('child_process');
 
+function createDeployLogger() {
+  const format = String(process.env.DEPLOY_WRAPPER_LOG_FORMAT || 'text').toLowerCase();
+  const json = format === 'json';
+
+  const emit = (level, event, details = {}) => {
+    const payload = {
+      component: 'deploy-wrapper',
+      level,
+      event,
+      ts: new Date().toISOString(),
+      ...details
+    };
+
+    if (json) {
+      console.log(JSON.stringify(payload));
+      return;
+    }
+
+    const icon = level === 'error' ? '❌' : 'ℹ️';
+    const detailText = Object.keys(details).length ? ` ${JSON.stringify(details)}` : '';
+    console.log(`${icon} [deploy-wrapper] ${event}${detailText}`);
+  };
+
+  return {
+    json,
+    info: (event, details) => emit('info', event, details),
+    error: (event, details) => emit('error', event, details)
+  };
+}
+
 function runNodeScript(scriptPath, args = []) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [scriptPath, ...args], {
@@ -21,11 +51,7 @@ function spawnApi(apiScript) {
     env: process.env
   });
 
-  const exited = new Promise((resolve) => {
-    child.on('close', (code, signal) => resolve({ code, signal }));
-  });
-
-  return { child, exited };
+  return { child };
 }
 
 async function waitForReady({
@@ -127,7 +153,28 @@ function resolveCanaryPlan(modeRaw) {
   throw new Error(`Unsupported canary mode: ${modeRaw}. Use traffic`);
 }
 
+async function runScriptStep({ logger, step, scriptPath, args = [] }) {
+  const started = Date.now();
+  logger.info(`${step}.start`, {
+    script: path.basename(scriptPath),
+    args
+  });
+
+  const code = await runNodeScript(scriptPath, args);
+  const duration = Date.now() - started;
+
+  logger.info(`${step}.end`, {
+    code,
+    duration_ms: duration
+  });
+
+  return { code, duration_ms: duration };
+}
+
 async function run() {
+  const startedAt = Date.now();
+  const logger = createDeployLogger();
+
   const args = process.argv.slice(2);
   const checkOnly = args.includes('--check-only');
   const skipCheck = args.includes('--skip-check');
@@ -145,6 +192,16 @@ async function run() {
   const profileArg = args.find((a) => a.startsWith('--profile='));
   const profilePath = profileArg ? profileArg.split('=')[1] : null;
 
+  logger.info('wrapper.start', {
+    args,
+    check_only: checkOnly,
+    skip_check: skipCheck,
+    smoke_plan: smokePlan,
+    canary_plan: canaryPlan,
+    managed_checks_enabled: managedChecksEnabled,
+    profile: profilePath || null
+  });
+
   const checkScript = path.join(__dirname, 'deployment-check.js');
   const smokeQuickScript = path.join(__dirname, 'smoke-check.js');
   const smokeDeepScript = path.join(__dirname, 'smoke-check-deep.js');
@@ -152,41 +209,78 @@ async function run() {
   const apiScript = path.join(__dirname, '..', 'core', 'api-server.js');
 
   if (!skipCheck) {
-    console.log('🔍 Running deployment preflight check...');
-    const checkArgs = profilePath ? [profilePath] : [];
-    const checkCode = await runNodeScript(checkScript, checkArgs);
-
-    if (checkCode !== 0) {
-      console.error('❌ Preflight failed. API startup aborted.');
-      process.exit(checkCode);
+    if (!logger.json) {
+      console.log('🔍 Running deployment preflight check...');
     }
 
-    console.log('✅ Preflight passed.');
+    const checkArgs = profilePath ? [profilePath] : [];
+    const preflight = await runScriptStep({
+      logger,
+      step: 'preflight',
+      scriptPath: checkScript,
+      args: checkArgs
+    });
+
+    if (preflight.code !== 0) {
+      if (!logger.json) {
+        console.error('❌ Preflight failed. API startup aborted.');
+      }
+      logger.error('wrapper.abort', {
+        reason: 'preflight_failed',
+        exit_code: preflight.code,
+        total_ms: Date.now() - startedAt
+      });
+      process.exit(preflight.code);
+    }
+
+    if (!logger.json) {
+      console.log('✅ Preflight passed.');
+    }
   }
 
   if (checkOnly) {
-    console.log('🧪 deploy-wrapper finished in check-only mode.');
+    if (!logger.json) {
+      console.log('🧪 deploy-wrapper finished in check-only mode.');
+    }
+    logger.info('check_only.complete', {
+      total_ms: Date.now() - startedAt
+    });
     process.exit(0);
   }
 
-  console.log('🚀 Starting Life Coach API...');
+  if (!logger.json) {
+    console.log('🚀 Starting Life Coach API...');
+  }
+  logger.info('api.start');
 
   const { child: api } = spawnApi(apiScript);
 
   if (!managedChecksEnabled) {
     const forward = (sig) => {
+      logger.info('signal.forward', { signal: sig });
       if (!api.killed) api.kill(sig);
     };
 
     process.on('SIGINT', () => forward('SIGINT'));
     process.on('SIGTERM', () => forward('SIGTERM'));
 
-    api.on('close', (code) => {
+    api.on('close', (code, signal) => {
+      logger.info('api.exit', {
+        code: code ?? 0,
+        signal: signal || null,
+        total_ms: Date.now() - startedAt
+      });
       process.exit(code ?? 0);
     });
 
     api.on('error', (err) => {
-      console.error('❌ Failed to start API:', err.message);
+      logger.error('api.error', {
+        error: err.message,
+        total_ms: Date.now() - startedAt
+      });
+      if (!logger.json) {
+        console.error('❌ Failed to start API:', err.message);
+      }
       process.exit(1);
     });
 
@@ -196,8 +290,16 @@ async function run() {
   const baseUrl = process.env.SMOKE_CHECK_BASE_URL || `http://localhost:${process.env.PORT || 8787}`;
   const readyTimeoutMs = Number(process.env.DEPLOY_WRAPPER_READY_TIMEOUT_MS || 20_000);
   const readyIntervalMs = Number(process.env.DEPLOY_WRAPPER_READY_INTERVAL_MS || 500);
+  const stopTimeoutMs = Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000);
 
   try {
+    const readyStarted = Date.now();
+    logger.info('ready.wait.start', {
+      base_url: baseUrl,
+      timeout_ms: readyTimeoutMs,
+      interval_ms: readyIntervalMs
+    });
+
     const ready = await waitForReady({
       baseUrl,
       timeoutMs: readyTimeoutMs,
@@ -205,45 +307,143 @@ async function run() {
       apiChild: api
     });
 
+    logger.info('ready.wait.end', {
+      ready,
+      duration_ms: Date.now() - readyStarted
+    });
+
     if (!ready) {
-      console.error('❌ API did not become ready in time for managed checks.');
-      await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+      if (!logger.json) {
+        console.error('❌ API did not become ready in time for managed checks.');
+      }
+      logger.error('wrapper.abort', {
+        reason: 'api_not_ready',
+        total_ms: Date.now() - startedAt
+      });
+
+      const stopStarted = Date.now();
+      logger.info('api.stop.start', { reason: 'api_not_ready' });
+      await stopApi(api, { stopTimeoutMs });
+      logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
+
       process.exit(1);
     }
 
     if (smokeEnabled) {
-      console.log(`🧪 Running smoke plan: ${smokePlan.join(', ')}`);
+      if (!logger.json) {
+        console.log(`🧪 Running smoke plan: ${smokePlan.join(', ')}`);
+      }
+      const smokeStarted = Date.now();
+      logger.info('smoke.plan.start', { steps: smokePlan });
 
       for (const step of smokePlan) {
         const script = step === 'deep' ? smokeDeepScript : smokeQuickScript;
-        const code = await runNodeScript(script);
-        if (code !== 0) {
-          console.error(`❌ Smoke step failed: ${step}`);
-          await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
-          process.exit(code);
+        const smokeStep = await runScriptStep({
+          logger,
+          step: `smoke.${step}`,
+          scriptPath: script
+        });
+
+        if (smokeStep.code !== 0) {
+          if (!logger.json) {
+            console.error(`❌ Smoke step failed: ${step}`);
+          }
+
+          logger.error('wrapper.abort', {
+            reason: 'smoke_failed',
+            smoke_step: step,
+            exit_code: smokeStep.code,
+            total_ms: Date.now() - startedAt
+          });
+
+          const stopStarted = Date.now();
+          logger.info('api.stop.start', { reason: 'smoke_failed' });
+          await stopApi(api, { stopTimeoutMs });
+          logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
+
+          process.exit(smokeStep.code);
         }
       }
+
+      logger.info('smoke.plan.end', {
+        duration_ms: Date.now() - smokeStarted,
+        steps: smokePlan
+      });
     }
 
     if (canaryEnabled) {
-      console.log(`🧪 Running canary plan: ${canaryPlan.join(', ')}`);
+      if (!logger.json) {
+        console.log(`🧪 Running canary plan: ${canaryPlan.join(', ')}`);
+      }
+      const canaryStarted = Date.now();
+      logger.info('canary.plan.start', { steps: canaryPlan });
 
       for (const step of canaryPlan) {
-        const code = await runNodeScript(canaryScript);
-        if (code !== 0) {
-          console.error(`❌ Canary step failed: ${step}`);
-          await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
-          process.exit(code);
+        const canaryStep = await runScriptStep({
+          logger,
+          step: `canary.${step}`,
+          scriptPath: canaryScript
+        });
+
+        if (canaryStep.code !== 0) {
+          if (!logger.json) {
+            console.error(`❌ Canary step failed: ${step}`);
+          }
+
+          logger.error('wrapper.abort', {
+            reason: 'canary_failed',
+            canary_step: step,
+            exit_code: canaryStep.code,
+            total_ms: Date.now() - startedAt
+          });
+
+          const stopStarted = Date.now();
+          logger.info('api.stop.start', { reason: 'canary_failed' });
+          await stopApi(api, { stopTimeoutMs });
+          logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
+
+          process.exit(canaryStep.code);
         }
       }
+
+      logger.info('canary.plan.end', {
+        duration_ms: Date.now() - canaryStarted,
+        steps: canaryPlan
+      });
     }
 
-    console.log('✅ deploy-wrapper managed check mode completed successfully.');
-    await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+    if (!logger.json) {
+      console.log('✅ deploy-wrapper managed check mode completed successfully.');
+    }
+
+    const stopStarted = Date.now();
+    logger.info('api.stop.start', { reason: 'managed_checks_complete' });
+    await stopApi(api, { stopTimeoutMs });
+    logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
+
+    logger.info('wrapper.complete', {
+      ok: true,
+      total_ms: Date.now() - startedAt,
+      smoke_plan: smokePlan,
+      canary_plan: canaryPlan
+    });
+
     process.exit(0);
   } catch (err) {
-    console.error('❌ deploy-wrapper managed mode fatal:', err.message);
-    await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+    if (!logger.json) {
+      console.error('❌ deploy-wrapper managed mode fatal:', err.message);
+    }
+
+    logger.error('wrapper.fatal', {
+      error: err.message,
+      total_ms: Date.now() - startedAt
+    });
+
+    const stopStarted = Date.now();
+    logger.info('api.stop.start', { reason: 'managed_mode_fatal' });
+    await stopApi(api, { stopTimeoutMs });
+    logger.info('api.stop.end', { duration_ms: Date.now() - stopStarted });
+
     process.exit(1);
   }
 }

@@ -275,13 +275,21 @@ Updated: 2026-02-27
      - `test-deploy-canary-wrapper.js`
    - Updated deployment docs with canary gate
 
+35. **Deploy-wrapper observability hooks added (structured logs + durations)**
+   - Added structured event logger in `scripts/deploy-wrapper.js`
+   - Supports `DEPLOY_WRAPPER_LOG_FORMAT=text|json`
+   - Emits step-level events with duration fields (`duration_ms`, `total_ms`)
+   - Covers preflight / readiness / smoke / canary / shutdown lifecycle
+   - Added coverage: `test-deploy-observability.js`
+   - Updated deployment ops docs with observability env + event reference
+
 ---
 
 ## In progress / next
 
-1. Add deploy-wrapper observability hooks (structured deploy-step logs + durations)
-2. Add alert ownership automation hooks (sync route policy with on-call roster)
-3. Add canary baseline profiling (auto-calibrate thresholds from historical runs)
+1. Add alert ownership automation hooks (sync route policy with on-call roster)
+2. Add canary baseline profiling (auto-calibrate thresholds from historical runs)
+3. Add deploy-wrapper event sink integration (persist structured deploy events to DB)
 
 ---
 
@@ -331,6 +339,7 @@ npm run test:alert-routing
 npm run test:alert-policy
 npm run test:inline-retry
 npm run test:deploy
+npm run test:deploy-observability
 npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary
