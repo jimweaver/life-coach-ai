@@ -13,6 +13,7 @@ const SchedulerRunner = require('./scheduler-runner');
 const {
   isUuid,
   createRateLimiter,
+  createRedisRateLimiter,
   badRequest,
   validateChatPayload,
   validateGoalPayload,
@@ -35,10 +36,22 @@ async function createServer() {
   app.use(express.json({ limit: '1mb' }));
   app.use(morgan('dev'));
 
-  const writeLimiter = createRateLimiter({
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
-    maxRequests: Number(process.env.RATE_LIMIT_MAX || 120)
-  });
+  const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
+  const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || 120);
+  const rateLimitBackend = String(process.env.RATE_LIMIT_BACKEND || 'redis').toLowerCase();
+
+  const writeLimiter = rateLimitBackend === 'memory'
+    ? createRateLimiter({
+      windowMs: rateLimitWindowMs,
+      maxRequests: rateLimitMax
+    })
+    : createRedisRateLimiter({
+      redis: db.redis,
+      windowMs: rateLimitWindowMs,
+      maxRequests: rateLimitMax,
+      keyPrefix: process.env.RATE_LIMIT_KEY_PREFIX || 'lifecoach:rate-limit',
+      fallbackToMemory: true
+    });
 
   app.use((req, res, next) => {
     if (req.method === 'POST') return writeLimiter(req, res, next);
@@ -57,6 +70,7 @@ async function createServer() {
     res.json({
       ok: status.redis && status.postgres,
       services: status,
+      rate_limit_backend: rateLimitBackend,
       time: new Date().toISOString()
     });
   });

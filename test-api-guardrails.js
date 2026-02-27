@@ -6,6 +6,8 @@ const createServer = require('./core/api-server');
 async function run() {
   process.env.RATE_LIMIT_WINDOW_MS = '60000';
   process.env.RATE_LIMIT_MAX = '4';
+  process.env.RATE_LIMIT_BACKEND = 'redis';
+  process.env.RATE_LIMIT_KEY_PREFIX = `lifecoach:test:guardrails:${Date.now()}:${process.pid}`;
 
   const { shutdown } = await createServer();
   const base = 'http://localhost:8787';

@@ -73,6 +73,13 @@ Updated: 2026-02-27
    - Orchestrator response now includes top citations with confidence line
    - Added test: `test-data-collector.js`
 
+10. **Distributed rate-limit backend (Redis) added**
+   - Added `createRedisRateLimiter` with memory fallback
+   - API now supports `RATE_LIMIT_BACKEND=redis|memory`
+   - Shared limiter key prefix via `RATE_LIMIT_KEY_PREFIX`
+   - `/health` now exposes `rate_limit_backend`
+   - Guardrails integration test now validates Redis-backed path
+
 ---
 
 ## In progress / next
@@ -81,7 +88,7 @@ Updated: 2026-02-27
 2. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
 3. Extend production guardrails:
    - audit log normalization
-   - distributed/shared rate-limit backend (Redis-based)
+   - endpoint-level policy tuning (per-route thresholds)
 4. Add external-source quality checks (freshness + duplicate suppression) for data collector
 5. Prepare deployment profile (OpenClaw-hosted + local DB)
 

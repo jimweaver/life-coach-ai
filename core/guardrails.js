@@ -7,10 +7,34 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeClientId(value) {
+  if (Array.isArray(value)) value = value[0];
+  if (typeof value !== 'string') return 'unknown';
+
+  const first = value.split(',')[0].trim();
+  if (!first) return 'unknown';
+
+  return first.replace(/[^a-zA-Z0-9:._-]/g, '_');
+}
+
+function defaultKeyFn(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) return normalizeClientId(forwarded);
+  return normalizeClientId(req.ip);
+}
+
+function buildRateLimitResponse(res, retryAfterMs) {
+  return res.status(429).json({
+    error: 'rate_limited',
+    message: 'Too many requests. Please retry later.',
+    retry_after_ms: retryAfterMs
+  });
+}
+
 function createRateLimiter({
   windowMs = 60_000,
   maxRequests = 120,
-  keyFn = (req) => req.ip || req.headers['x-forwarded-for'] || 'unknown'
+  keyFn = defaultKeyFn
 } = {}) {
   const bucket = new Map();
 
@@ -23,16 +47,62 @@ function createRateLimiter({
     const recent = existing.filter((ts) => ts > windowStart);
 
     if (recent.length >= maxRequests) {
-      return res.status(429).json({
-        error: 'rate_limited',
-        message: 'Too many requests. Please retry later.',
-        retry_after_ms: windowMs
-      });
+      return buildRateLimitResponse(res, windowMs);
     }
 
     recent.push(now);
     bucket.set(key, recent);
     next();
+  };
+}
+
+function createRedisRateLimiter({
+  redis,
+  windowMs = 60_000,
+  maxRequests = 120,
+  keyFn = defaultKeyFn,
+  keyPrefix = 'lifecoach:rate-limit',
+  fallbackToMemory = true
+} = {}) {
+  const memoryFallback = createRateLimiter({ windowMs, maxRequests, keyFn });
+
+  if (!redis) {
+    return memoryFallback;
+  }
+
+  return async function redisRateLimiter(req, res, next) {
+    const clientKey = keyFn(req);
+    const key = `${keyPrefix}:${clientKey}`;
+
+    try {
+      const pipeline = redis.multi();
+      pipeline.incr(key);
+      pipeline.pttl(key);
+
+      const execResult = await pipeline.exec();
+      const count = Number(execResult?.[0]?.[1] || 0);
+      let ttlMs = Number(execResult?.[1]?.[1] || -1);
+
+      if (count <= 0) {
+        return next();
+      }
+
+      if (count === 1 || ttlMs < 0) {
+        await redis.pexpire(key, windowMs);
+        ttlMs = windowMs;
+      }
+
+      if (count > maxRequests) {
+        return buildRateLimitResponse(res, Math.max(1, ttlMs));
+      }
+
+      return next();
+    } catch (err) {
+      if (fallbackToMemory) {
+        return memoryFallback(req, res, next);
+      }
+      return next(err);
+    }
   };
 }
 
@@ -98,6 +168,7 @@ function validateRiskPayload(body) {
 module.exports = {
   isUuid,
   createRateLimiter,
+  createRedisRateLimiter,
   badRequest,
   validateChatPayload,
   validateGoalPayload,
