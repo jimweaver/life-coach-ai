@@ -339,13 +339,22 @@ Updated: 2026-02-27
    - Added coverage: `test-deploy-event-analytics.js`
    - Deployment ops docs updated with analytics endpoint usage
 
+42. **Ownership drift alert routing added (critical auto-escalation path)**
+   - `GET /jobs/delivery/ownership-drift` now supports routing controls:
+     - `ALERT_OWNER_DRIFT_ROUTE_ENABLED`
+     - `ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL`
+   - Drift endpoint now returns route metadata (`attempted`, `routed`)
+   - Critical ownership drift can auto-route through `AlertRouter` (with escalation path)
+   - Added coverage: `test-alert-ownership-drift-routing.js`
+   - Governance docs updated with drift routing controls
+
 ---
 
 ## In progress / next
 
-1. Add ownership drift alert routing (auto-escalate when drift level is critical)
-2. Add canary drift trend endpoint (windowed drift severity over recent history)
-3. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
+1. Add canary drift trend endpoint (windowed drift severity over recent history)
+2. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
+3. Add ownership drift suppression controls (cooldown + duplicate alert window)
 
 ---
 
@@ -396,6 +405,7 @@ npm run test:alert-routing
 npm run test:alert-policy
 npm run test:alert-ownership
 npm run test:alert-drift
+npm run test:alert-drift-route
 npm run test:inline-retry
 npm run test:deploy
 npm run test:deploy-observability

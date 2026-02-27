@@ -29,13 +29,14 @@ async function run() {
   try {
     const base = 'http://localhost:8787';
 
-    const res = await fetch(`${base}/jobs/delivery/ownership-drift?sync=true&emitAudit=true`);
+    const res = await fetch(`${base}/jobs/delivery/ownership-drift?sync=true&emitAudit=true&route=false`);
     assert(res.status === 200, `ownership drift endpoint expected 200, got ${res.status}`);
 
     const payload = await res.json();
     assert(payload.ok === true, 'payload.ok should be true');
     assert(payload.drift?.drift_detected === true, 'expected drift_detected=true');
     assert(['warn', 'critical'].includes(payload.drift?.level), `unexpected drift level: ${payload.drift?.level}`);
+    assert(payload.route?.attempted === false, 'expected route.attempted=false when route=false');
 
     const reasons = payload.drift?.reasons || [];
     assert(reasons.includes('oncall_sync_error'), 'expected oncall_sync_error reason');

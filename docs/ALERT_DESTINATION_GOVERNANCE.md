@@ -66,6 +66,9 @@ Use drift detector to catch stale/missing owner assignments:
   - `ALERT_OWNER_DRIFT_WARN_STALE_MINUTES` (default: `120`)
   - `ALERT_OWNER_DRIFT_CRITICAL_STALE_MINUTES` (default: `360`)
   - `ALERT_OWNER_DRIFT_STRICT` (default: `false`)
+- Drift routing env:
+  - `ALERT_OWNER_DRIFT_ROUTE_ENABLED` (default: `true`)
+  - `ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL` (default: `critical`)
 
 Drift will raise reasons such as:
 - `oncall_sync_stale`

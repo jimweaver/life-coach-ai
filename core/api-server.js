@@ -296,7 +296,9 @@ async function createServer() {
         oncall_refresh_ms: Number(process.env.DELIVERY_ALERT_ONCALL_REFRESH_MS || 60000),
         owner_drift_warn_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_WARN_STALE_MINUTES || 120),
         owner_drift_critical_stale_minutes: Number(process.env.ALERT_OWNER_DRIFT_CRITICAL_STALE_MINUTES || 360),
-        owner_drift_strict: String(process.env.ALERT_OWNER_DRIFT_STRICT || 'false').toLowerCase() === 'true'
+        owner_drift_strict: String(process.env.ALERT_OWNER_DRIFT_STRICT || 'false').toLowerCase() === 'true',
+        owner_drift_route_enabled: String(process.env.ALERT_OWNER_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+        owner_drift_route_min_level: String(process.env.ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL || 'critical').toLowerCase()
       },
       canary_drift_policy: {
         route_enabled: String(process.env.CANARY_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
@@ -598,6 +600,13 @@ async function createServer() {
         ? true
         : String(req.query.emitAudit).toLowerCase() !== 'false';
 
+      const routeEnabled = req.query.route === undefined
+        ? String(process.env.ALERT_OWNER_DRIFT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false'
+        : String(req.query.route).toLowerCase() !== 'false';
+
+      const routeMinLevel = String(process.env.ALERT_OWNER_DRIFT_ROUTE_MIN_LEVEL || 'critical').toLowerCase();
+      const levelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
+
       if (!scheduler || typeof scheduler.getAlertRoutePolicy !== 'function') {
         return res.status(400).json({
           ok: false,
@@ -607,6 +616,36 @@ async function createServer() {
 
       const policy = await scheduler.getAlertRoutePolicy({ forceSync });
       const drift = ownershipDriftDetector.computeDrift(policy);
+
+      let routed = null;
+      const shouldRoute = routeEnabled
+        && drift.drift_detected
+        && (levelRank[drift.level] || 1) >= (levelRank[routeMinLevel] || 3);
+
+      if (shouldRoute) {
+        const alert = {
+          level: drift.level,
+          should_notify: true,
+          reasons: ['ownership_drift_detected', ...drift.reasons],
+          metrics: {
+            log: {
+              window_minutes: null,
+              failure_rate: null
+            },
+            outbox: {
+              recent: {
+                dead_letter: null
+              }
+            }
+          },
+          trend: {
+            dead_letter_total: null,
+            growth_streak: null
+          }
+        };
+
+        routed = await alertRouter.routeDeliveryAlert(alert);
+      }
 
       if (emitAudit && drift.drift_detected) {
         try {
@@ -623,7 +662,13 @@ async function createServer() {
               reasons: drift.reasons,
               sync: drift.sync,
               owners: drift.owners,
-              policy_snapshot: drift.policy_snapshot
+              policy_snapshot: drift.policy_snapshot,
+              route: {
+                enabled: routeEnabled,
+                min_level: routeMinLevel,
+                attempted: !!shouldRoute,
+                routed
+              }
             }
           );
         } catch (_e) {
@@ -634,7 +679,13 @@ async function createServer() {
       res.json({
         ok: true,
         drift,
-        policy
+        policy,
+        route: {
+          enabled: routeEnabled,
+          min_level: routeMinLevel,
+          attempted: !!shouldRoute
+        },
+        routed
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
