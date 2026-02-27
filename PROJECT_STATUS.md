@@ -574,13 +574,26 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-telemetry-suppression-alert-suppression-trend`
    - Deployment ops + readiness docs updated with suppression trend observability gate
 
+63. **Telemetry suppression-alert suppression trend threshold alerts added (cooldown/duplicate saturation + spikes)**
+   - Added detector module: `core/deploy-trend-telemetry-suppression-alert-suppression-alert.js`
+   - Added endpoint: `GET /jobs/deploy-events/anomalies/telemetry/alerts/suppression/anomalies/suppression/anomalies`
+   - Supports filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+   - Supports optional controls: `emitAudit`, `route`, `routeMinLevel`, `routeUserId`, `routeChannel`, `routeRetryMax`
+   - Detects suppression trend threshold breaches:
+     - `cooldown_saturation` / `cooldown_spike`
+     - `duplicate_window_saturation` / `duplicate_window_spike`
+   - Emits audit signals: `deploy_trend_telemetry_suppression_alert_suppression_alert_evaluated`, `deploy_trend_telemetry_suppression_alert_suppression_alert_routed`
+   - `/health` now exposes `deploy_trend_telemetry_suppression_alert_suppression_alert_policy`
+   - Added coverage: `test-deploy-trend-telemetry-suppression-alert-suppression-alert.js`
+   - Added npm script: `test:deploy-telemetry-suppression-alert-suppression-alert`
+   - Deployment ops + readiness docs updated with suppression-alert suppression threshold alert endpoint/test gates
+
 ---
 
 ## In progress / next
 
 1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Add threshold alerts on suppression-alert suppression trend rollups (cooldown/duplicate saturation)
-3. Advance skill-learning hook rollout + auto-learn validation across agents
+2. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
 

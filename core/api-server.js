@@ -25,6 +25,7 @@ const {
 const DeployTrendAnomalyDetector = require('./deploy-trend-anomaly');
 const DeployTrendTelemetryAlertDetector = require('./deploy-trend-telemetry-alert');
 const DeployTrendTelemetrySuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert');
+const DeployTrendTelemetrySuppressionAlertSuppressionAlertDetector = require('./deploy-trend-telemetry-suppression-alert-suppression-alert');
 const {
   isUuid,
   createRateLimiter,
@@ -56,6 +57,7 @@ async function createServer() {
   const deployTrendAnomalyDetector = new DeployTrendAnomalyDetector();
   const deployTrendTelemetryAlertDetector = new DeployTrendTelemetryAlertDetector();
   const deployTrendTelemetrySuppressionAlertDetector = new DeployTrendTelemetrySuppressionAlertDetector();
+  const deployTrendTelemetrySuppressionAlertSuppressionAlertDetector = new DeployTrendTelemetrySuppressionAlertSuppressionAlertDetector();
 
   const ownerDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
   const canaryDriftLevelRank = { info: 1, warn: 2, warning: 2, critical: 3 };
@@ -98,6 +100,15 @@ async function createServer() {
     suppressionDuplicateWindowMinutes: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_DUPLICATE_WINDOW_MINUTES || 120),
     suppressionStateKey: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_STATE_KEY || 'lifecoach:deploy-trend-telemetry-suppression-alert:suppression',
     suppressionStateTtlSec: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_STATE_TTL_SEC || 604800)
+  };
+
+  const deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy = {
+    routeEnabled: String(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+    routeMinLevel: String(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ALERT_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
+    routeUserId: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ALERT_ROUTE_USER_ID || deployTrendTelemetrySuppressionAlertRoutingPolicy.routeUserId || null,
+    routeChannel: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ALERT_ROUTE_CHANNEL || deployTrendTelemetrySuppressionAlertRoutingPolicy.routeChannel || 'cron-event',
+    routeRetryMax: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ALERT_ROUTE_RETRY_MAX || deployTrendTelemetrySuppressionAlertRoutingPolicy.routeRetryMax || 1),
+    emitAudit: String(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ALERT_EMIT_AUDIT || 'true').toLowerCase() !== 'false'
   };
 
   const ownershipDriftRoutingPolicy = {
@@ -1088,6 +1099,25 @@ async function createServer() {
         min_suppressed: deployTrendTelemetrySuppressionAlertDetector.minSuppressed,
         min_buckets: deployTrendTelemetrySuppressionAlertDetector.minBuckets,
         baseline_buckets: deployTrendTelemetrySuppressionAlertDetector.baselineBuckets
+      },
+      deploy_trend_telemetry_suppression_alert_suppression_alert_policy: {
+        route_enabled: deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeEnabled,
+        route_min_level: deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeMinLevel,
+        route_user_id_configured: !!deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeUserId,
+        route_channel: deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeChannel,
+        route_retry_max: deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeRetryMax,
+        emit_audit: deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.emitAudit,
+        warn_cooldown_share: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.warnCooldownShare,
+        critical_cooldown_share: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.criticalCooldownShare,
+        warn_duplicate_window_share: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.warnDuplicateWindowShare,
+        critical_duplicate_window_share: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.criticalDuplicateWindowShare,
+        warn_cooldown_spike: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.warnCooldownSpike,
+        critical_cooldown_spike: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.criticalCooldownSpike,
+        warn_duplicate_window_spike: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.warnDuplicateWindowSpike,
+        critical_duplicate_window_spike: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.criticalDuplicateWindowSpike,
+        min_suppressed: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.minSuppressed,
+        min_buckets: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.minBuckets,
+        baseline_buckets: deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.baselineBuckets
       },
       time: new Date().toISOString()
     });
@@ -2775,6 +2805,183 @@ async function createServer() {
           suppression_state_key_configured: !!deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionStateKey
         },
         trend
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/deploy-events/anomalies/telemetry/alerts/suppression/anomalies/suppression/anomalies', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 60);
+      const limit = Number(req.query.limit || 5000);
+      const bucketLimit = Number(req.query.bucketLimit || 500);
+      const emitAudit = req.query.emitAudit === undefined
+        ? deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.emitAudit
+        : String(req.query.emitAudit).toLowerCase() !== 'false';
+      const route = req.query.route === undefined
+        ? deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeEnabled
+        : String(req.query.route).toLowerCase() !== 'false';
+      const routeMinLevel = String(req.query.routeMinLevel || deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeMinLevel || 'warn').toLowerCase();
+      const routeUserId = req.query.routeUserId !== undefined
+        ? String(req.query.routeUserId || '')
+        : deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeUserId;
+      const routeChannel = String(req.query.routeChannel || deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeChannel || 'cron-event');
+      const routeRetryMax = Number(req.query.routeRetryMax ?? deployTrendTelemetrySuppressionAlertSuppressionAlertRoutingPolicy.routeRetryMax ?? 1);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20000) {
+        return badRequest(res, ['limit must be an integer between 1 and 20000']);
+      }
+
+      if (!Number.isInteger(bucketLimit) || bucketLimit < 1 || bucketLimit > 5000) {
+        return badRequest(res, ['bucketLimit must be an integer between 1 and 5000']);
+      }
+
+      const trend = await db.getDeployTrendTelemetrySuppressionAlertRouteSuppressionTrend({
+        sinceMinutes,
+        bucketMinutes,
+        runId,
+        source,
+        limit,
+        bucketLimit
+      });
+
+      const alert = deployTrendTelemetrySuppressionAlertSuppressionAlertDetector.evaluate({ trend });
+
+      const shouldRoute = route
+        && alert.should_notify
+        && (deployTrendLevelRank[alert.level] || 1) >= (deployTrendLevelRank[routeMinLevel] || 2);
+
+      if (emitAudit) {
+        await db.logAgentAction(
+          'deploy-trend',
+          null,
+          null,
+          'deploy_trend_telemetry_suppression_alert_suppression_alert_evaluated',
+          null,
+          'success',
+          null,
+          {
+            level: alert.level,
+            alert_detected: alert.alert_detected,
+            reasons: alert.reasons,
+            metrics: alert.metrics,
+            filters: { runId, source, sinceMinutes, bucketMinutes }
+          }
+        );
+      }
+
+      let routeResult = null;
+      if (shouldRoute) {
+        try {
+          routeResult = await alertRouter.route({
+            level: alert.level,
+            title: `Suppression-alert suppression trend alert: ${alert.reasons.join(', ') || 'anomaly detected'}`,
+            message: alert.anomalies.map(a => a.message).join('; ') || 'Suppression-alert suppression trend threshold breached',
+            context: {
+              alert,
+              trend_summary: {
+                bucket_count: trend.bucket_count,
+                sample_size: trend.sample_size
+              },
+              filters: { runId, source, sinceMinutes, bucketMinutes }
+            },
+            userId: routeUserId || undefined,
+            channel: routeChannel,
+            retryMax: Math.max(0, routeRetryMax)
+          });
+
+          if (emitAudit) {
+            await db.logAgentAction(
+              'deploy-trend',
+              null,
+              null,
+              'deploy_trend_telemetry_suppression_alert_suppression_alert_routed',
+              null,
+              'success',
+              null,
+              {
+                routed: true,
+                route_result: routeResult,
+                level: alert.level,
+                reasons: alert.reasons,
+                runId,
+                source
+              }
+            );
+          }
+        } catch (routeErr) {
+          routeResult = { error: routeErr.message, routed: false };
+          if (emitAudit) {
+            await db.logAgentAction(
+              'deploy-trend',
+              null,
+              null,
+              'deploy_trend_telemetry_suppression_alert_suppression_alert_route_failed',
+              null,
+              'error',
+              routeErr.message,
+              {
+                level: alert.level,
+                reasons: alert.reasons,
+                runId,
+                source
+              }
+            );
+          }
+        }
+      }
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          limit,
+          bucketLimit
+        },
+        route: {
+          enabled: route,
+          min_level: routeMinLevel,
+          attempted: !!shouldRoute,
+          result: routeResult
+        },
+        alert: {
+          level: alert.level,
+          alert_detected: alert.alert_detected,
+          reasons: alert.reasons,
+          anomalies: alert.anomalies,
+          metrics: alert.metrics
+        },
+        trend_summary: {
+          sample_size: trend.sample_size,
+          bucket_count: trend.bucket_count,
+          bucket_minutes: trend.bucket_minutes,
+          latest_bucket: Array.isArray(trend.buckets) && trend.buckets.length
+            ? trend.buckets[trend.buckets.length - 1]
+            : null
+        }
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
