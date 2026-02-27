@@ -641,6 +641,94 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/deploy-events', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const event = req.query.event ? String(req.query.event).trim() : null;
+      const level = req.query.level ? String(req.query.level).trim().toLowerCase() : null;
+      const sinceMinutesRaw = req.query.sinceMinutes;
+      const limit = Number(req.query.limit || 100);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (event && !/^[a-z0-9_.:-]{2,120}$/i.test(event)) {
+        return badRequest(res, ['event must be a valid event token']);
+      }
+
+      if (level && !['info', 'error', 'warn', 'debug'].includes(level)) {
+        return badRequest(res, ['level must be one of info|warn|error|debug']);
+      }
+
+      let sinceMinutes = null;
+      if (sinceMinutesRaw !== undefined) {
+        sinceMinutes = Number(sinceMinutesRaw);
+        if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+          return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+        }
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        return badRequest(res, ['limit must be an integer between 1 and 1000']);
+      }
+
+      const events = await db.listDeployRunEvents({
+        runId,
+        event,
+        level,
+        sinceMinutes,
+        limit
+      });
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          event,
+          level,
+          sinceMinutes,
+          limit
+        },
+        count: events.length,
+        events
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/deploy-events/summary', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 60);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      const summary = await db.summarizeDeployRunEvents({
+        runId,
+        sinceMinutes
+      });
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          sinceMinutes
+        },
+        summary
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/jobs/delivery/alerts', async (req, res) => {
     try {
       const windowMinutes = Number(req.query.windowMinutes || 60);

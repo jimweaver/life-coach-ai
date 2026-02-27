@@ -30,6 +30,7 @@ class DatabaseStorageManager {
     });
 
     this.outboxReadyPromise = null;
+    this.deployEventsReadyPromise = null;
 
     console.log('✅ DatabaseStorageManager initialized');
   }
@@ -645,6 +646,110 @@ class DatabaseStorageManager {
     }
 
     return metrics;
+  }
+
+  // ========== Deploy Run Event Analytics ==========
+
+  async ensureDeployRunEventsTable() {
+    if (!this.deployEventsReadyPromise) {
+      this.deployEventsReadyPromise = (async () => {
+        await this.postgres.query(
+          `CREATE TABLE IF NOT EXISTS deploy_run_events (
+             id BIGSERIAL PRIMARY KEY,
+             run_id UUID,
+             source VARCHAR(80) NOT NULL,
+             level VARCHAR(16) NOT NULL,
+             event VARCHAR(120) NOT NULL,
+             event_ts TIMESTAMP WITH TIME ZONE NOT NULL,
+             payload JSONB DEFAULT '{}',
+             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+           )`
+        );
+
+        await this.postgres.query(
+          `CREATE INDEX IF NOT EXISTS idx_deploy_run_events_run_ts
+             ON deploy_run_events(run_id, event_ts DESC)`
+        );
+
+        await this.postgres.query(
+          `CREATE INDEX IF NOT EXISTS idx_deploy_run_events_event
+             ON deploy_run_events(event)`
+        );
+
+        await this.postgres.query(
+          `CREATE INDEX IF NOT EXISTS idx_deploy_run_events_created
+             ON deploy_run_events(created_at DESC)`
+        );
+      })().catch((err) => {
+        this.deployEventsReadyPromise = null;
+        throw err;
+      });
+    }
+
+    return this.deployEventsReadyPromise;
+  }
+
+  async listDeployRunEvents({
+    runId = null,
+    event = null,
+    level = null,
+    sinceMinutes = null,
+    limit = 100
+  } = {}) {
+    await this.ensureDeployRunEventsTable();
+
+    let query = `SELECT id, run_id, source, level, event, event_ts, payload, created_at
+                 FROM deploy_run_events
+                 WHERE 1=1`;
+    const params = [];
+
+    if (runId) {
+      params.push(runId);
+      query += ` AND run_id = $${params.length}`;
+    }
+
+    if (event) {
+      params.push(event);
+      query += ` AND event = $${params.length}`;
+    }
+
+    if (level) {
+      params.push(level);
+      query += ` AND level = $${params.length}`;
+    }
+
+    if (Number.isInteger(sinceMinutes) && sinceMinutes > 0) {
+      params.push(sinceMinutes);
+      query += ` AND event_ts >= NOW() - ($${params.length} * INTERVAL '1 minute')`;
+    }
+
+    params.push(limit);
+    query += ` ORDER BY event_ts DESC LIMIT $${params.length}`;
+
+    const result = await this.postgres.query(query, params);
+    return result.rows;
+  }
+
+  async summarizeDeployRunEvents({ sinceMinutes = 60, runId = null } = {}) {
+    await this.ensureDeployRunEventsTable();
+
+    let query = `SELECT event, level,
+                        COUNT(*)::int AS count,
+                        MIN(event_ts) AS first_seen,
+                        MAX(event_ts) AS last_seen
+                 FROM deploy_run_events
+                 WHERE event_ts >= NOW() - ($1 * INTERVAL '1 minute')`;
+    const params = [sinceMinutes];
+
+    if (runId) {
+      params.push(runId);
+      query += ` AND run_id = $${params.length}`;
+    }
+
+    query += ` GROUP BY event, level ORDER BY count DESC, event ASC`;
+
+    const result = await this.postgres.query(query, params);
+    return result.rows;
   }
 
   // ========== Scheduler Support ==========

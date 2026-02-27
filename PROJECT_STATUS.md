@@ -328,13 +328,24 @@ Updated: 2026-02-27
    - Added coverage: `test-canary-drift-alert.js`
    - Deployment/readiness docs updated with canary drift gate
 
+41. **Deploy event analytics endpoint added (`deploy_run_events` query API)**
+   - Added DB analytics helpers:
+     - `listDeployRunEvents(...)`
+     - `summarizeDeployRunEvents(...)`
+   - New API endpoints:
+     - `GET /jobs/deploy-events`
+     - `GET /jobs/deploy-events/summary`
+   - Supports filters by `runId`, `event`, `level`, `sinceMinutes`, `limit`
+   - Added coverage: `test-deploy-event-analytics.js`
+   - Deployment ops docs updated with analytics endpoint usage
+
 ---
 
 ## In progress / next
 
-1. Add deploy event analytics endpoint (query deploy_run_events by run/time/event)
-2. Add ownership drift alert routing (auto-escalate when drift level is critical)
-3. Add canary drift trend endpoint (windowed drift severity over recent history)
+1. Add ownership drift alert routing (auto-escalate when drift level is critical)
+2. Add canary drift trend endpoint (windowed drift severity over recent history)
+3. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
 
 ---
 
@@ -389,6 +400,7 @@ npm run test:inline-retry
 npm run test:deploy
 npm run test:deploy-observability
 npm run test:deploy-sink
+npm run test:deploy-analytics
 npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary

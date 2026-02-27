@@ -141,10 +141,18 @@ Stored event fields:
 - `event_ts`
 - `payload` (JSONB)
 
+Deploy event analytics APIs:
+- `GET /jobs/deploy-events`
+  - filters: `runId`, `event`, `level`, `sinceMinutes`, `limit`
+- `GET /jobs/deploy-events/summary`
+  - filters: `runId`, `sinceMinutes`
+  - grouped output by `event + level`
+
 Validation:
 
 ```bash
 npm run test:deploy-sink
+npm run test:deploy-analytics
 ```
 
 ---
