@@ -645,13 +645,23 @@ Updated: 2026-02-27
    - Added test: `test-skill-learning-analytics.js`
    - Added npm script: `test:skill-learning-analytics`
 
+70. **Connection pool monitoring**
+   - Added `getPoolMetrics()` method to `DatabaseStorageManager`
+   - Returns PostgreSQL pool stats: total, idle, waiting, max, utilization ratio
+   - Returns Redis stats: status, reconnect attempts
+   - Health check flags for postgres, redis, and overall health
+   - Added `GET /health/pools` endpoint to API server
+   - Added test: `test-pool-metrics.js`
+   - Added npm script: `test:pool-metrics`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add connection pool monitoring
-2. Add health check endpoint extensions for deep checks
-3. Add orchestrator performance metrics endpoint
+1. Add health check endpoint extensions for deep checks
+2. Add orchestrator performance metrics endpoint
+3. Add API request latency histogram metrics
 
 ---
 

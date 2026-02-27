@@ -68,6 +68,7 @@
     "test:orchestrator-skill-learning": "node test-orchestrator-skill-learning.js",
     "test:smoke-stress": "node test-smoke-stress.js",
     "test:skill-learning-analytics": "node test-skill-learning-analytics.js",
+    "test:pool-metrics": "node test-pool-metrics.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",
     "deploy:preflight": "node scripts/deploy-wrapper.js --check-only",

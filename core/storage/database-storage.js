@@ -1437,6 +1437,38 @@ class DatabaseStorageManager {
 
   // ========== Utility Methods ==========
 
+  // ========== Connection Pool Monitoring ==========
+
+  getPoolMetrics() {
+    const poolStatus = {
+      postgres: {
+        total: this.postgres.totalCount,
+        idle: this.postgres.idleCount,
+        waiting: this.postgres.waitingCount,
+        max: this.postgres.options.max
+      },
+      redis: {
+        status: this.redis.status,
+        reconnectAttempts: this.redis.reconnectAttempts || 0
+      }
+    };
+
+    // Calculate utilization ratio
+    poolStatus.postgres.utilization = poolStatus.postgres.total > 0
+      ? (poolStatus.postgres.total - poolStatus.postgres.idle) / poolStatus.postgres.total
+      : 0;
+
+    // Health check
+    poolStatus.healthy = {
+      postgres: poolStatus.postgres.waiting < 5 && poolStatus.postgres.utilization < 0.9,
+      redis: poolStatus.redis.status === 'ready'
+    };
+
+    poolStatus.healthy.overall = poolStatus.healthy.postgres && poolStatus.healthy.redis;
+
+    return poolStatus;
+  }
+
   async testConnections() {
     try {
       // Test Redis

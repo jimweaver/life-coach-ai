@@ -1247,6 +1247,24 @@ async function createServer() {
     }
   });
 
+  // Connection pool monitoring endpoint
+  app.get('/health/pools', (_req, res) => {
+    try {
+      const metrics = db.getPoolMetrics();
+      res.json({
+        ok: true,
+        pools: metrics,
+        timestamp: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('[Pool Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   app.post('/chat', async (req, res) => {
     try {
       const errors = validateChatPayload(req.body);
