@@ -107,6 +107,14 @@ Trend analysis over recent windows:
     - `minSamples=<int>`
     - `historyFile=/abs/path/history.jsonl`
 
+Suppression observability snapshot:
+
+- `GET /jobs/delivery/canary-drift/suppression`
+  - Optional params:
+    - `minSamples=<int>`
+    - `historyFile=/abs/path/history.jsonl`
+  - Returns drift summary + route candidacy + suppression state (remaining cooldown / duplicate window)
+
 Routing behavior:
 - Controlled by `CANARY_DRIFT_ROUTE_ENABLED` (default: `true`)
 - Minimum routed severity controlled by `CANARY_DRIFT_ROUTE_MIN_LEVEL` (`warn|critical`)
@@ -125,6 +133,13 @@ Drift route suppression controls:
 Audit signals:
 - `agent_logs.action = canary_profile_drift_detected`
 - `agent_logs.action = canary_profile_drift_route_suppressed`
+
+Validation:
+
+```bash
+npm run test:canary-drift-suppression
+npm run test:canary-drift-suppression-observability
+```
 
 ### Deploy-wrapper observability hooks
 

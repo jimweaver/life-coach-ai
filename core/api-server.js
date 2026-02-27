@@ -1073,23 +1073,74 @@ async function createServer() {
 
   app.get('/jobs/delivery/canary-drift/suppression', async (req, res) => {
     try {
-      const forceSync = String(req.query.sync || 'true').toLowerCase() !== 'false';
+      const historyFile = req.query.historyFile
+        ? String(req.query.historyFile)
+        : undefined;
 
-      if (!scheduler || typeof scheduler.getAlertRoutePolicy !== 'function') {
-        return res.status(400).json({
-          ok: false,
-          reason: 'canary_drift_not_supported'
-        });
+      const minSamples = Number(req.query.minSamples || process.env.CANARY_PROFILE_MIN_SAMPLES || 5);
+      if (!Number.isInteger(minSamples) || minSamples < 1 || minSamples > 100000) {
+        return badRequest(res, ['minSamples must be an integer between 1 and 100000']);
       }
 
-      const policy = await scheduler.getAlertRoutePolicy({ forceSync });
-      const drift = canaryDriftDetector.computeDrift(policy);
-      const suppression = await evaluateCanaryDriftSuppression(drift);
+      const resolvedHistoryFile = resolveHistoryFile({ historyFile });
+      const history = await loadHistory(resolvedHistoryFile);
+      const profile = computeSuggestedThresholds(history, { minSamples });
+
+      const activeThresholds = {
+        max_error_rate: Number(process.env.CANARY_MAX_ERROR_RATE ?? 0.2),
+        max_p95_ms: Number(process.env.CANARY_P95_MAX_MS ?? 3500),
+        max_avg_ms: Number(process.env.CANARY_AVG_MAX_MS ?? 2200)
+      };
+
+      const drift = canaryDriftDetector.evaluate({
+        profile,
+        activeThresholds,
+        historyCount: history.length,
+        historyFile: resolvedHistoryFile
+      });
+
+      const routeEnabled = canaryDriftRoutingPolicy.routeEnabled;
+      const routeMinLevel = canaryDriftRoutingPolicy.routeMinLevel;
+      const routeCandidate = routeEnabled
+        && drift.should_notify
+        && (canaryDriftLevelRank[drift.level] || 1) >= (canaryDriftLevelRank[routeMinLevel] || 2);
+
+      let suppression = {
+        enabled: !!canaryDriftRoutingPolicy.suppressionEnabled,
+        suppressed: false,
+        reason: routeCandidate ? null : 'route_not_candidate',
+        signature: buildCanaryDriftSignature(drift),
+        remaining_ms: 0,
+        state: await loadCanaryDriftRouteState()
+      };
+
+      if (routeCandidate) {
+        if (canaryDriftRoutingPolicy.suppressionEnabled) {
+          suppression = await evaluateCanaryDriftSuppression(drift);
+        } else {
+          suppression = {
+            enabled: false,
+            suppressed: false,
+            reason: 'suppression_disabled',
+            signature: buildCanaryDriftSignature(drift),
+            remaining_ms: 0,
+            state: await loadCanaryDriftRouteState()
+          };
+        }
+      }
 
       res.json({
         ok: true,
-        suppression,
-        policy
+        history_file: resolvedHistoryFile,
+        history_count: history.length,
+        profile,
+        drift,
+        route: {
+          enabled: routeEnabled,
+          min_level: routeMinLevel,
+          candidate: !!routeCandidate
+        },
+        suppression
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

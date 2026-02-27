@@ -38,6 +38,7 @@ npm run test:e2e
 - [ ] Deploy events trend/anomaly: `GET /jobs/deploy-events/trend` / `GET /jobs/deploy-events/anomalies`
 - [ ] Canary drift check: `GET /jobs/canary/drift`
 - [ ] Canary drift trend check: `GET /jobs/canary/drift-trend`
+- [ ] Canary drift suppression observability: `GET /jobs/delivery/canary-drift/suppression`
 
 ---
 
@@ -83,6 +84,7 @@ npm run test:ops-policy
 npm run test:alert-policy
 npm run test:alert-drift
 npm run test:canary-drift
+npm run test:canary-drift-suppression-observability
 npm run test:deploy-analytics
 npm run test:deploy-trend
 npm run test:deploy-anomaly

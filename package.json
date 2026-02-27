@@ -51,6 +51,7 @@
     "test:canary-drift": "node test-canary-drift-alert.js",
     "test:canary-drift-trend": "node test-canary-drift-trend.js",
     "test:canary-drift-suppression": "node test-canary-drift-suppression.js",
+    "test:canary-drift-suppression-observability": "node test-canary-drift-suppression-observability.js",
     "test:graceful": "node test-graceful-shutdown.js",
     "deploy:check": "node scripts/deployment-check.js",
     "deploy:up": "node scripts/deploy-wrapper.js",

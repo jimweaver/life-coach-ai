@@ -446,6 +446,14 @@ Updated: 2026-02-27
    - Deployment ops docs + readiness checklist now reference the dashboard gate
    - Added npm script: `test:deploy-dashboard`
 
+52. **Canary drift suppression observability endpoint hardened + validated**
+   - Fixed `GET /jobs/delivery/canary-drift/suppression` to use canary profile drift evaluation (history + active thresholds)
+   - Added response fields: `history_file`, `history_count`, `profile`, `drift`, `route`, `suppression`
+   - Added validation for `minSamples` query parameter
+   - Added dedicated coverage: `test-canary-drift-suppression-observability.js`
+   - Added npm script: `test:canary-drift-suppression-observability`
+   - Deployment ops docs updated with suppression observability usage + validation commands
+
 ---
 
 ## In progress / next
@@ -521,6 +529,7 @@ npm run test:canary-profile
 npm run test:canary-drift
 npm run test:canary-drift-trend
 npm run test:canary-drift-suppression
+npm run test:canary-drift-suppression-observability
 npm run test:graceful
 npm run test:e2e
 ```
