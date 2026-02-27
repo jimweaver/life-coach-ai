@@ -94,15 +94,23 @@ Updated: 2026-02-27
    - Sensitive metadata fields are auto-redacted (`token/api_key/password/authorization/...`)
    - Added audit test coverage: `test-audit-log.js`
 
+13. **Scheduler → OpenClaw cron-event delivery path connected**
+   - Added `core/cron-event-delivery.js`
+   - Scheduler now emits `systemEvent` envelopes for monitor/morning cycles
+   - Delivery backends: `none | redis | webhook` (env-controlled)
+   - Redis queue key configurable by `CRON_EVENT_REDIS_LIST_KEY`
+   - Added tests: `test-cron-delivery.js`, `test-scheduler-delivery.js`
+   - `/health` now exposes `cron_delivery_mode`
+
 ---
 
 ## In progress / next
 
-1. Connect scheduler jobs to actual OpenClaw cron-event delivery pipeline
-2. Extend production guardrails:
+1. Extend production guardrails:
    - endpoint-level policy tuning (per-route thresholds)
    - alerting hooks for repeated rate-limit hits
-3. Add external-source quality checks (freshness + duplicate suppression) for data collector
+2. Add external-source quality checks (freshness + duplicate suppression) for data collector
+3. Add scheduler delivery observability dashboard/query endpoint (queue depth + failure rate)
 4. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---
@@ -125,5 +133,7 @@ npm run test:guardrails
 npm run test:data
 npm run test:adapter
 npm run test:audit
+npm run test:delivery
+npm run test:scheduler-delivery
 npm run test:e2e
 ```

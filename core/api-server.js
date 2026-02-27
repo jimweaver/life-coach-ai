@@ -30,6 +30,7 @@ async function createServer() {
   const kbiMonitor = new KBIMonitor();
   const interventionEngine = new InterventionEngine();
   const scheduler = new SchedulerRunner(db);
+  const cronDeliveryMode = scheduler?.delivery?.mode || 'none';
 
   app.use(helmet());
   app.use(cors());
@@ -71,6 +72,7 @@ async function createServer() {
       ok: status.redis && status.postgres,
       services: status,
       rate_limit_backend: rateLimitBackend,
+      cron_delivery_mode: cronDeliveryMode,
       time: new Date().toISOString()
     });
   });
