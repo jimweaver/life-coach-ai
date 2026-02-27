@@ -438,13 +438,21 @@ Updated: 2026-02-27
    - Used by deploy trend anomaly routing + canary drift routing
    - Emits audit log with `{kind}_routed` action type
 
+51. **Deploy event dashboard endpoint added (timeline + heatmap summary)**
+   - Added endpoint: `GET /jobs/deploy-events/dashboard`
+   - Returns timeline, heatmap, and summary in a single payload for the requested filters
+   - Filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `runLimit`, `timelineLimit`, `heatmapLimit`
+   - Added coverage: `test-deploy-event-dashboard.js`
+   - Deployment ops docs + readiness checklist now reference the dashboard gate
+   - Added npm script: `test:deploy-dashboard`
+
 ---
 
 ## In progress / next
 
-1. Add canary drift suppression observability endpoint (state + cooldown remaining)
-2. Add deploy event dashboard test script to runbook
-3. Consolidate alert routing with generic `route()` method across all alert types
+1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
+2. Expand deploy event analytics instrumentation (trend + dashboard) for anomaly visibility and routing telemetry
+3. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
 

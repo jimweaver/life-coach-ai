@@ -34,6 +34,7 @@ npm run test:e2e
 - [ ] Replay policy visibility: `GET /jobs/dead-letter/replay-policy`
 - [ ] Data quality probe: `GET /data-quality/probe`
 - [ ] Deploy events analytics: `GET /jobs/deploy-events` / `GET /jobs/deploy-events/summary`
+- [ ] Deploy events dashboard: `GET /jobs/deploy-events/dashboard`
 - [ ] Deploy events trend/anomaly: `GET /jobs/deploy-events/trend` / `GET /jobs/deploy-events/anomalies`
 - [ ] Canary drift check: `GET /jobs/canary/drift`
 - [ ] Canary drift trend check: `GET /jobs/canary/drift-trend`
@@ -85,6 +86,7 @@ npm run test:canary-drift
 npm run test:deploy-analytics
 npm run test:deploy-trend
 npm run test:deploy-anomaly
+npm run test:deploy-dashboard
 npm run test:graceful
 npm run test:e2e
 ```
