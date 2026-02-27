@@ -1013,6 +1013,171 @@ class DatabaseStorageManager {
     };
   }
 
+  async getDeployTrendTelemetrySuppressionAlertRouteSuppressionTrend({
+    sinceMinutes = 240,
+    bucketMinutes = 60,
+    runId = null,
+    source = null,
+    limit = 5000,
+    bucketLimit = 500
+  } = {}) {
+    const result = await this.postgres.query(
+      `SELECT action, status, metadata, timestamp
+       FROM agent_logs
+       WHERE action IN (
+         'deploy_trend_telemetry_suppression_alert_detected',
+         'deploy_trend_telemetry_suppression_alert_route_suppressed',
+         'deploy_trend_telemetry_suppression_alert_routed'
+       )
+         AND timestamp >= NOW() - ($1 * INTERVAL '1 minute')
+       ORDER BY timestamp DESC
+       LIMIT $2`,
+      [sinceMinutes, limit]
+    );
+
+    const bucketMs = Math.max(1, Number(bucketMinutes)) * 60 * 1000;
+    const bucketMap = new Map();
+
+    let sampleSize = 0;
+
+    for (const row of result.rows) {
+      if (!matchesDeployTrendTelemetryScope(row, { runId, source })) continue;
+
+      sampleSize += 1;
+
+      const tsMs = new Date(row.timestamp).getTime();
+      if (!Number.isFinite(tsMs)) continue;
+
+      const bucketStartMs = Math.floor(tsMs / bucketMs) * bucketMs;
+      const bucketKey = String(bucketStartMs);
+
+      if (!bucketMap.has(bucketKey)) {
+        bucketMap.set(bucketKey, {
+          bucket_start: new Date(bucketStartMs).toISOString(),
+          bucket_end: new Date(bucketStartMs + bucketMs).toISOString(),
+          detected: 0,
+          route_candidate: 0,
+          route_attempted: 0,
+          route_suppressed_total: 0,
+          route_suppressed_cooldown: 0,
+          route_suppressed_duplicate_window: 0,
+          route_suppressed_other: 0,
+          route_delivered: 0,
+          route_failed: 0
+        });
+      }
+
+      const bucket = bucketMap.get(bucketKey);
+
+      if (row.action === 'deploy_trend_telemetry_suppression_alert_detected') {
+        bucket.detected += 1;
+        if (row.metadata?.route?.candidate) {
+          bucket.route_candidate += 1;
+        }
+      }
+
+      if (row.action === 'deploy_trend_telemetry_suppression_alert_route_suppressed') {
+        bucket.route_suppressed_total += 1;
+        const reason = String(extractDeployTrendTelemetrySuppressionReason(row) || '').toLowerCase();
+
+        if (reason === 'cooldown') {
+          bucket.route_suppressed_cooldown += 1;
+        } else if (reason === 'duplicate_window') {
+          bucket.route_suppressed_duplicate_window += 1;
+        } else {
+          bucket.route_suppressed_other += 1;
+        }
+      }
+
+      if (row.action === 'deploy_trend_telemetry_suppression_alert_routed') {
+        bucket.route_attempted += 1;
+        if (String(row.status || '').toLowerCase() === 'success') {
+          bucket.route_delivered += 1;
+        } else {
+          bucket.route_failed += 1;
+        }
+      }
+    }
+
+    const buckets = Array.from(bucketMap.values())
+      .sort((a, b) => new Date(a.bucket_start) - new Date(b.bucket_start))
+      .slice(-bucketLimit)
+      .map((bucket) => ({
+        ...bucket,
+        route_attempt_rate: bucket.route_candidate > 0
+          ? Number((bucket.route_attempted / bucket.route_candidate).toFixed(4))
+          : 0,
+        suppression_rate: (bucket.route_candidate > 0 || bucket.detected > 0)
+          ? Number((bucket.route_suppressed_total / Math.max(1, bucket.route_candidate || bucket.detected)).toFixed(4))
+          : 0,
+        route_failure_rate: bucket.route_attempted > 0
+          ? Number((bucket.route_failed / bucket.route_attempted).toFixed(4))
+          : 0,
+        cooldown_share: bucket.route_suppressed_total > 0
+          ? Number((bucket.route_suppressed_cooldown / bucket.route_suppressed_total).toFixed(4))
+          : 0,
+        duplicate_window_share: bucket.route_suppressed_total > 0
+          ? Number((bucket.route_suppressed_duplicate_window / bucket.route_suppressed_total).toFixed(4))
+          : 0
+      }));
+
+    const totals = buckets.reduce((acc, bucket) => {
+      acc.detected += Number(bucket.detected || 0);
+      acc.route_candidate += Number(bucket.route_candidate || 0);
+      acc.route_attempted += Number(bucket.route_attempted || 0);
+      acc.route_suppressed_total += Number(bucket.route_suppressed_total || 0);
+      acc.route_suppressed_cooldown += Number(bucket.route_suppressed_cooldown || 0);
+      acc.route_suppressed_duplicate_window += Number(bucket.route_suppressed_duplicate_window || 0);
+      acc.route_suppressed_other += Number(bucket.route_suppressed_other || 0);
+      acc.route_delivered += Number(bucket.route_delivered || 0);
+      acc.route_failed += Number(bucket.route_failed || 0);
+      return acc;
+    }, {
+      detected: 0,
+      route_candidate: 0,
+      route_attempted: 0,
+      route_suppressed_total: 0,
+      route_suppressed_cooldown: 0,
+      route_suppressed_duplicate_window: 0,
+      route_suppressed_other: 0,
+      route_delivered: 0,
+      route_failed: 0
+    });
+
+    totals.route_attempt_rate = totals.route_candidate > 0
+      ? Number((totals.route_attempted / totals.route_candidate).toFixed(4))
+      : 0;
+
+    totals.suppression_rate = (totals.route_candidate > 0 || totals.detected > 0)
+      ? Number((totals.route_suppressed_total / Math.max(1, totals.route_candidate || totals.detected)).toFixed(4))
+      : 0;
+
+    totals.route_failure_rate = totals.route_attempted > 0
+      ? Number((totals.route_failed / totals.route_attempted).toFixed(4))
+      : 0;
+
+    totals.cooldown_share = totals.route_suppressed_total > 0
+      ? Number((totals.route_suppressed_cooldown / totals.route_suppressed_total).toFixed(4))
+      : 0;
+
+    totals.duplicate_window_share = totals.route_suppressed_total > 0
+      ? Number((totals.route_suppressed_duplicate_window / totals.route_suppressed_total).toFixed(4))
+      : 0;
+
+    return {
+      window_minutes: sinceMinutes,
+      bucket_minutes: bucketMinutes,
+      sample_size: sampleSize,
+      bucket_count: buckets.length,
+      filters: {
+        run_id: runId || null,
+        source: source || null
+      },
+      totals,
+      buckets
+    };
+  }
+
   // ========== Deploy Run Event Analytics ==========
 
   async ensureDeployRunEventsTable() {
