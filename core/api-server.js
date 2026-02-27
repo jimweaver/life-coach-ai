@@ -20,6 +20,9 @@ const {
   computeSuggestedThresholds
 } = require('../scripts/canary-check');
 const {
+  computeCanaryDriftTrend
+} = require('../scripts/canary-drift-trend');
+const {
   isUuid,
   createRateLimiter,
   createRedisRateLimiter,
@@ -306,6 +309,8 @@ async function createServer() {
         warn_ratio: Number(process.env.CANARY_DRIFT_WARN_RATIO || 0.25),
         critical_ratio: Number(process.env.CANARY_DRIFT_CRITICAL_RATIO || 0.5),
         profile_min_samples: Number(process.env.CANARY_PROFILE_MIN_SAMPLES || 5),
+        trend_default_since_minutes: Number(process.env.CANARY_DRIFT_TREND_DEFAULT_SINCE_MINUTES || 1440),
+        trend_default_bucket_minutes: Number(process.env.CANARY_DRIFT_TREND_DEFAULT_BUCKET_MINUTES || 60),
         history_file: resolveHistoryFile()
       },
       time: new Date().toISOString()
@@ -934,6 +939,58 @@ async function createServer() {
           attempted: !!shouldRoute
         },
         routed
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/canary/drift-trend', async (req, res) => {
+    try {
+      const historyFile = req.query.historyFile
+        ? String(req.query.historyFile)
+        : undefined;
+
+      const sinceMinutes = Number(req.query.sinceMinutes || process.env.CANARY_DRIFT_TREND_DEFAULT_SINCE_MINUTES || 1440);
+      const bucketMinutes = Number(req.query.bucketMinutes || process.env.CANARY_DRIFT_TREND_DEFAULT_BUCKET_MINUTES || 60);
+      const minSamples = Number(req.query.minSamples || process.env.CANARY_PROFILE_MIN_SAMPLES || 5);
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(minSamples) || minSamples < 1 || minSamples > 100000) {
+        return badRequest(res, ['minSamples must be an integer between 1 and 100000']);
+      }
+
+      const resolvedHistoryFile = resolveHistoryFile({ historyFile });
+      const history = await loadHistory(resolvedHistoryFile);
+
+      const activeThresholds = {
+        max_error_rate: Number(process.env.CANARY_MAX_ERROR_RATE ?? 0.2),
+        max_p95_ms: Number(process.env.CANARY_P95_MAX_MS ?? 3500),
+        max_avg_ms: Number(process.env.CANARY_AVG_MAX_MS ?? 2200)
+      };
+
+      const trend = computeCanaryDriftTrend({
+        history,
+        activeThresholds,
+        sinceMinutes,
+        bucketMinutes,
+        minSamples,
+        warnRatio: Number(process.env.CANARY_DRIFT_WARN_RATIO ?? 0.25),
+        criticalRatio: Number(process.env.CANARY_DRIFT_CRITICAL_RATIO ?? 0.5),
+        historyFile: resolvedHistoryFile
+      });
+
+      res.json({
+        ok: true,
+        history_file: resolvedHistoryFile,
+        trend
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

@@ -34,6 +34,7 @@ npm run test:e2e
 - [ ] Replay policy visibility: `GET /jobs/dead-letter/replay-policy`
 - [ ] Data quality probe: `GET /data-quality/probe`
 - [ ] Canary drift check: `GET /jobs/canary/drift`
+- [ ] Canary drift trend check: `GET /jobs/canary/drift-trend`
 
 ---
 

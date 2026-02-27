@@ -91,12 +91,21 @@ Use it to tune canary thresholds over time instead of static defaults.
 
 Detect when active canary thresholds drift too far from history-derived baseline:
 
-- Endpoint: `GET /jobs/canary/drift`
-- Optional params:
-  - `minSamples=<int>`
-  - `route=true|false`
-  - `emitAudit=true|false`
-  - `historyFile=/abs/path/history.jsonl`
+- `GET /jobs/canary/drift`
+  - Optional params:
+    - `minSamples=<int>`
+    - `route=true|false`
+    - `emitAudit=true|false`
+    - `historyFile=/abs/path/history.jsonl`
+
+Trend analysis over recent windows:
+
+- `GET /jobs/canary/drift-trend`
+  - Optional params:
+    - `sinceMinutes=<int>`
+    - `bucketMinutes=<int>`
+    - `minSamples=<int>`
+    - `historyFile=/abs/path/history.jsonl`
 
 Routing behavior:
 - Controlled by `CANARY_DRIFT_ROUTE_ENABLED` (default: `true`)
@@ -240,6 +249,8 @@ npm run test:deploy-analytics
 | `CANARY_DRIFT_CRITICAL_RATIO` | 0.5 | Critical threshold for active-vs-suggested ratio delta |
 | `CANARY_DRIFT_ROUTE_ENABLED` | true | Enable routing when canary drift is detected |
 | `CANARY_DRIFT_ROUTE_MIN_LEVEL` | warn | Minimum drift level routed via alert router |
+| `CANARY_DRIFT_TREND_DEFAULT_SINCE_MINUTES` | 1440 | Default lookback window for drift trend endpoint |
+| `CANARY_DRIFT_TREND_DEFAULT_BUCKET_MINUTES` | 60 | Default bucket size for drift trend endpoint |
 | `DEPLOY_WRAPPER_LOG_FORMAT` | text | Wrapper log format (`text` or `json`) |
 | `DEPLOY_WRAPPER_READY_TIMEOUT_MS` | 20000 | Max wait for `/ready` in managed modes |
 | `DEPLOY_WRAPPER_READY_INTERVAL_MS` | 500 | Poll interval for `/ready` |

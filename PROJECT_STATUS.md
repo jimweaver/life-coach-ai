@@ -348,13 +348,23 @@ Updated: 2026-02-27
    - Added coverage: `test-alert-ownership-drift-routing.js`
    - Governance docs updated with drift routing controls
 
+43. **Canary drift trend endpoint added (windowed drift severity history)**
+   - Added trend utility: `scripts/canary-drift-trend.js`
+   - New API endpoint: `GET /jobs/canary/drift-trend`
+   - Supports window/bucket analysis with filters:
+     - `sinceMinutes`, `bucketMinutes`, `minSamples`, `historyFile`
+   - Returns bucketed drift distribution (`info/warn/critical`) + drift/critical rates
+   - `/health` now exposes trend default settings (`CANARY_DRIFT_TREND_DEFAULT_*`)
+   - Added coverage: `test-canary-drift-trend.js`
+   - Deployment/readiness docs updated with trend gate
+
 ---
 
 ## In progress / next
 
-1. Add canary drift trend endpoint (windowed drift severity over recent history)
-2. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
-3. Add ownership drift suppression controls (cooldown + duplicate alert window)
+1. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
+2. Add ownership drift suppression controls (cooldown + duplicate alert window)
+3. Add canary drift auto-suppression controls (prevent duplicate drift paging within cooldown)
 
 ---
 
@@ -416,6 +426,7 @@ npm run test:deploy-canary
 npm run test:canary
 npm run test:canary-profile
 npm run test:canary-drift
+npm run test:canary-drift-trend
 npm run test:graceful
 npm run test:e2e
 ```
