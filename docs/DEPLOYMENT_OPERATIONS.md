@@ -180,9 +180,10 @@ Deploy event analytics APIs:
   - filters: `runId`, `sinceMinutes`
   - grouped output by `event + level`
 - `GET /jobs/deploy-events/dashboard`
-  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `runLimit`, `timelineLimit`, `heatmapLimit`, `includeTelemetry`
+  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `runLimit`, `timelineLimit`, `heatmapLimit`, `includeTelemetry`, `includeTelemetryTrend`
   - returns timeline + heatmap + summary in a single payload for dashboards
   - includes `anomaly_telemetry` when `includeTelemetry=true`
+  - includes `anomaly_telemetry_trend` when `includeTelemetryTrend=true`
 - `GET /jobs/deploy-events/trend`
   - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `runLimit`, `timelineLimit`, `heatmapLimit`
   - returns per-run timeline buckets + failure heatmap
@@ -193,6 +194,9 @@ Deploy event analytics APIs:
 - `GET /jobs/deploy-events/anomalies/telemetry`
   - filters: `runId`, `source`, `sinceMinutes`, `limit`
   - summarizes anomaly routing telemetry (detected/suppressed/route-attempted/delivered)
+- `GET /jobs/deploy-events/anomalies/telemetry/trend`
+  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `limit`, `bucketLimit`
+  - returns time-bucketed telemetry rollups (suppression/route attempt/delivery trends)
 
 Validation:
 
@@ -202,6 +206,7 @@ npm run test:deploy-analytics
 npm run test:deploy-trend
 npm run test:deploy-anomaly
 npm run test:deploy-telemetry
+npm run test:deploy-telemetry-trend
 ```
 
 ---

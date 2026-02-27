@@ -1525,6 +1525,65 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/deploy-events/anomalies/telemetry/trend', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 60);
+      const limit = Number(req.query.limit || 5000);
+      const bucketLimit = Number(req.query.bucketLimit || 500);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20000) {
+        return badRequest(res, ['limit must be an integer between 1 and 20000']);
+      }
+
+      if (!Number.isInteger(bucketLimit) || bucketLimit < 1 || bucketLimit > 5000) {
+        return badRequest(res, ['bucketLimit must be an integer between 1 and 5000']);
+      }
+
+      const trend = await db.getDeployTrendAnomalyTelemetryTrend({
+        sinceMinutes,
+        bucketMinutes,
+        runId,
+        source,
+        limit,
+        bucketLimit
+      });
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          limit,
+          bucketLimit
+        },
+        trend
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/jobs/deploy-events/anomalies', async (req, res) => {
     try {
       const runId = req.query.runId ? String(req.query.runId).trim() : null;
@@ -1859,6 +1918,9 @@ async function createServer() {
       const includeTelemetry = req.query.includeTelemetry === undefined
         ? true
         : String(req.query.includeTelemetry).toLowerCase() !== 'false';
+      const includeTelemetryTrend = req.query.includeTelemetryTrend === undefined
+        ? false
+        : String(req.query.includeTelemetryTrend).toLowerCase() !== 'false';
 
       if (runId && !isUuid(runId)) {
         return badRequest(res, ['runId must be a valid UUID']);
@@ -1888,7 +1950,7 @@ async function createServer() {
         return badRequest(res, ['heatmapLimit must be an integer between 1 and 2000']);
       }
 
-      const [timeline, heatmapRows, summary, anomalyTelemetry] = await Promise.all([
+      const [timeline, heatmapRows, summary, anomalyTelemetry, anomalyTelemetryTrend] = await Promise.all([
         db.getDeployEventTimeline({
           sinceMinutes,
           bucketMinutes,
@@ -1913,6 +1975,16 @@ async function createServer() {
             source,
             limit: 5000
           })
+          : Promise.resolve(null),
+        includeTelemetryTrend
+          ? db.getDeployTrendAnomalyTelemetryTrend({
+            sinceMinutes,
+            bucketMinutes,
+            runId,
+            source,
+            limit: 5000,
+            bucketLimit: 500
+          })
           : Promise.resolve(null)
       ]);
 
@@ -1933,7 +2005,8 @@ async function createServer() {
           runLimit,
           timelineLimit,
           heatmapLimit,
-          includeTelemetry
+          includeTelemetry,
+          includeTelemetryTrend
         },
         timeline,
         heatmap: {
@@ -1942,6 +2015,7 @@ async function createServer() {
           peak_event: heatmapRows[0]?.event || null
         },
         anomaly_telemetry: anomalyTelemetry,
+        anomaly_telemetry_trend: anomalyTelemetryTrend,
         summary
       });
     } catch (err) {

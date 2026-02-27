@@ -2,6 +2,28 @@ const Redis = require('ioredis');
 const { Pool } = require('pg');
 const { normalizeAuditEvent } = require('../audit-log');
 
+function extractDeployTrendTelemetryFilters(row) {
+  if (row?.action === 'deploy_trend_anomaly_routed') {
+    return row?.metadata?.metadata?.filters || {};
+  }
+
+  return row?.metadata?.filters || {};
+}
+
+function matchesDeployTrendTelemetryScope(row, { runId = null, source = null } = {}) {
+  const filters = extractDeployTrendTelemetryFilters(row);
+
+  if (runId && String(filters?.runId || '') !== String(runId)) {
+    return false;
+  }
+
+  if (source && String(filters?.source || '') !== String(source)) {
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Local Database Storage Manager
  * 使用本地 Redis + PostgreSQL
@@ -681,24 +703,8 @@ class DatabaseStorageManager {
       }
     };
 
-    const matchesScope = (row) => {
-      const filters = row.action === 'deploy_trend_anomaly_routed'
-        ? row.metadata?.metadata?.filters
-        : row.metadata?.filters;
-
-      if (runId && String(filters?.runId || '') !== String(runId)) {
-        return false;
-      }
-
-      if (source && String(filters?.source || '') !== String(source)) {
-        return false;
-      }
-
-      return true;
-    };
-
     for (const row of result.rows) {
-      if (!matchesScope(row)) continue;
+      if (!matchesDeployTrendTelemetryScope(row, { runId, source })) continue;
 
       metrics.sample_size += 1;
 
@@ -739,6 +745,101 @@ class DatabaseStorageManager {
       : 0;
 
     return metrics;
+  }
+
+  async getDeployTrendAnomalyTelemetryTrend({
+    sinceMinutes = 240,
+    bucketMinutes = 60,
+    runId = null,
+    source = null,
+    limit = 5000,
+    bucketLimit = 500
+  } = {}) {
+    const result = await this.postgres.query(
+      `SELECT action, status, metadata, timestamp
+       FROM agent_logs
+       WHERE action IN ('deploy_trend_anomaly_detected', 'deploy_trend_anomaly_route_suppressed', 'deploy_trend_anomaly_routed')
+         AND timestamp >= NOW() - ($1 * INTERVAL '1 minute')
+       ORDER BY timestamp DESC
+       LIMIT $2`,
+      [sinceMinutes, limit]
+    );
+
+    const bucketMs = Math.max(1, Number(bucketMinutes)) * 60 * 1000;
+    const bucketMap = new Map();
+
+    let sampleSize = 0;
+
+    for (const row of result.rows) {
+      if (!matchesDeployTrendTelemetryScope(row, { runId, source })) continue;
+
+      sampleSize += 1;
+
+      const tsMs = new Date(row.timestamp).getTime();
+      if (!Number.isFinite(tsMs)) continue;
+
+      const bucketStartMs = Math.floor(tsMs / bucketMs) * bucketMs;
+      const bucketKey = String(bucketStartMs);
+
+      if (!bucketMap.has(bucketKey)) {
+        bucketMap.set(bucketKey, {
+          bucket_start: new Date(bucketStartMs).toISOString(),
+          bucket_end: new Date(bucketStartMs + bucketMs).toISOString(),
+          detected: 0,
+          suppressed: 0,
+          route_attempted: 0,
+          route_delivered: 0,
+          route_failed: 0
+        });
+      }
+
+      const bucket = bucketMap.get(bucketKey);
+
+      if (row.action === 'deploy_trend_anomaly_detected') {
+        bucket.detected += 1;
+      }
+
+      if (row.action === 'deploy_trend_anomaly_route_suppressed') {
+        bucket.suppressed += 1;
+      }
+
+      if (row.action === 'deploy_trend_anomaly_routed') {
+        bucket.route_attempted += 1;
+        if (String(row.status || '').toLowerCase() === 'success') {
+          bucket.route_delivered += 1;
+        } else {
+          bucket.route_failed += 1;
+        }
+      }
+    }
+
+    const buckets = Array.from(bucketMap.values())
+      .sort((a, b) => new Date(a.bucket_start) - new Date(b.bucket_start))
+      .slice(-bucketLimit)
+      .map((bucket) => ({
+        ...bucket,
+        suppression_rate: bucket.detected > 0
+          ? Number((bucket.suppressed / bucket.detected).toFixed(4))
+          : 0,
+        route_attempt_rate: bucket.detected > 0
+          ? Number((bucket.route_attempted / bucket.detected).toFixed(4))
+          : 0,
+        route_success_rate: bucket.route_attempted > 0
+          ? Number((bucket.route_delivered / bucket.route_attempted).toFixed(4))
+          : 0
+      }));
+
+    return {
+      window_minutes: sinceMinutes,
+      bucket_minutes: bucketMinutes,
+      sample_size: sampleSize,
+      bucket_count: buckets.length,
+      filters: {
+        run_id: runId || null,
+        source: source || null
+      },
+      buckets
+    };
   }
 
   // ========== Deploy Run Event Analytics ==========
