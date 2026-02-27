@@ -16,6 +16,87 @@ class SchedulerRunner {
     this.deliverMorning = options.deliverMorning ?? String(process.env.SCHEDULER_DELIVER_MORNING || 'true').toLowerCase() !== 'false';
   }
 
+  hasOutboxSupport() {
+    return Boolean(
+      this.db
+      && typeof this.db.enqueueOutboundEvent === 'function'
+      && typeof this.db.markOutboundEventDispatched === 'function'
+      && typeof this.db.markOutboundEventFailed === 'function'
+    );
+  }
+
+  async dispatchIntervention({ userId, cycle, message, severity = 'info', metadata = {} }) {
+    const envelope = this.delivery.buildEnvelope({
+      userId,
+      cycle,
+      message,
+      severity,
+      metadata
+    });
+
+    const outbox = {
+      queued: false,
+      event_id: null,
+      status: this.hasOutboxSupport() ? 'not_queued' : 'not_supported',
+      error: null
+    };
+
+    if (this.hasOutboxSupport()) {
+      try {
+        outbox.event_id = await this.db.enqueueOutboundEvent({
+          eventType: `scheduled_intervention.${cycle}`,
+          userId,
+          channel: 'cron-event',
+          source: 'scheduler-runner',
+          payload: envelope
+        });
+        outbox.queued = true;
+        outbox.status = 'queued';
+      } catch (err) {
+        outbox.status = 'queue_failed';
+        outbox.error = err.message;
+      }
+    }
+
+    let deliveryResult;
+    try {
+      deliveryResult = await this.delivery.deliver(envelope);
+    } catch (err) {
+      deliveryResult = {
+        delivered: false,
+        mode: this.delivery?.mode || 'unknown',
+        reason: err.message
+      };
+    }
+
+    if (outbox.event_id) {
+      try {
+        if (deliveryResult?.delivered) {
+          await this.db.markOutboundEventDispatched(outbox.event_id, {
+            delivery: deliveryResult
+          });
+          outbox.status = 'dispatched';
+        } else {
+          await this.db.markOutboundEventFailed(
+            outbox.event_id,
+            deliveryResult?.reason || 'delivery_failed',
+            { delivery: deliveryResult }
+          );
+          outbox.status = 'failed';
+        }
+      } catch (err) {
+        outbox.status = 'failed';
+        outbox.error = outbox.error || err.message;
+      }
+    }
+
+    return {
+      envelope,
+      deliveryResult,
+      outbox
+    };
+  }
+
   async runMonitorCycle({ limitUsers = 100 } = {}) {
     const users = await this.db.listUserIds(limitUsers);
 
@@ -27,6 +108,9 @@ class SchedulerRunner {
       interventions: 0,
       deliveredEvents: 0,
       deliveryFailures: 0,
+      outboxQueued: 0,
+      outboxDispatched: 0,
+      outboxFailed: 0,
       results: []
     };
 
@@ -49,8 +133,10 @@ class SchedulerRunner {
       if (interventionMsg) summary.interventions += 1;
 
       let deliveryResult = null;
+      let outbox = null;
+
       if (interventionMsg && this.deliverMonitor) {
-        const envelope = this.delivery.buildEnvelope({
+        const dispatch = await this.dispatchIntervention({
           userId,
           cycle: 'monitor',
           message: interventionMsg,
@@ -62,13 +148,18 @@ class SchedulerRunner {
           }
         });
 
-        deliveryResult = await this.delivery.deliver(envelope);
+        deliveryResult = dispatch.deliveryResult;
+        outbox = dispatch.outbox;
 
-        if (deliveryResult.delivered) {
+        if (deliveryResult?.delivered) {
           summary.deliveredEvents += 1;
         } else if (this.delivery.mode !== 'none') {
           summary.deliveryFailures += 1;
         }
+
+        if (outbox?.queued) summary.outboxQueued += 1;
+        if (outbox?.status === 'dispatched') summary.outboxDispatched += 1;
+        if (outbox?.status === 'failed' || outbox?.status === 'queue_failed') summary.outboxFailed += 1;
       }
 
       await this.db.logAgentAction(
@@ -82,7 +173,8 @@ class SchedulerRunner {
         {
           evaluation,
           intervention_message: interventionMsg,
-          delivery: deliveryResult
+          delivery: deliveryResult,
+          outbox
         }
       );
 
@@ -91,7 +183,9 @@ class SchedulerRunner {
         status: 'evaluated',
         overall: evaluation.overall,
         intervention: interventionMsg || null,
-        delivered: !!deliveryResult?.delivered
+        delivered: !!deliveryResult?.delivered,
+        outbox_event_id: outbox?.event_id || null,
+        outbox_status: outbox?.status || null
       });
     }
 
@@ -105,6 +199,9 @@ class SchedulerRunner {
       targetedUsers: users.length,
       deliveredEvents: 0,
       deliveryFailures: 0,
+      outboxQueued: 0,
+      outboxDispatched: 0,
+      outboxFailed: 0,
       messages: []
     };
 
@@ -113,8 +210,10 @@ class SchedulerRunner {
       const message = this.intervention.buildMorningCheckIn({ profile: profile || {} });
 
       let deliveryResult = null;
+      let outbox = null;
+
       if (this.deliverMorning) {
-        const envelope = this.delivery.buildEnvelope({
+        const dispatch = await this.dispatchIntervention({
           userId,
           cycle: 'morning',
           message,
@@ -124,13 +223,18 @@ class SchedulerRunner {
           }
         });
 
-        deliveryResult = await this.delivery.deliver(envelope);
+        deliveryResult = dispatch.deliveryResult;
+        outbox = dispatch.outbox;
 
-        if (deliveryResult.delivered) {
+        if (deliveryResult?.delivered) {
           result.deliveredEvents += 1;
         } else if (this.delivery.mode !== 'none') {
           result.deliveryFailures += 1;
         }
+
+        if (outbox?.queued) result.outboxQueued += 1;
+        if (outbox?.status === 'dispatched') result.outboxDispatched += 1;
+        if (outbox?.status === 'failed' || outbox?.status === 'queue_failed') result.outboxFailed += 1;
       }
 
       await this.db.logAgentAction(
@@ -143,14 +247,17 @@ class SchedulerRunner {
         null,
         {
           message_preview: message.slice(0, 120),
-          delivery: deliveryResult
+          delivery: deliveryResult,
+          outbox
         }
       );
 
       result.messages.push({
         userId,
         message,
-        delivered: !!deliveryResult?.delivered
+        delivered: !!deliveryResult?.delivered,
+        outbox_event_id: outbox?.event_id || null,
+        outbox_status: outbox?.status || null
       });
     }
 

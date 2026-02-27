@@ -123,14 +123,19 @@ Updated: 2026-02-27
    - Added DB observability helpers: `getSchedulerDeliveryMetrics`, `getOutboundEventStats`
    - Added test: `test-delivery-metrics.js`
 
+17. **Outbox table wired into scheduler dispatch flow**
+   - `core/scheduler-runner.js` now enqueues outbound events per monitor/morning intervention
+   - Delivery outcome now updates outbox status (`dispatched` / `failed`) with metadata
+   - Scheduler cycle summaries now include outbox counters + event ids/status
+   - Added integration test: `test-outbox-flow.js`
+
 ---
 
 ## In progress / next
 
 1. Add delivery retry/backoff + dead-letter handling for cron-event transport
 2. Add data-collector quality telemetry endpoint/reporting (surface quality block via API)
-3. Wire outbox table into scheduler delivery flow for durable dispatch tracking
-4. Prepare deployment profile (OpenClaw-hosted + local DB)
+3. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---
 
@@ -154,6 +159,7 @@ npm run test:data
 npm run test:adapter
 npm run test:audit
 npm run test:metrics
+npm run test:outbox
 npm run test:delivery
 npm run test:scheduler-delivery
 npm run test:e2e
