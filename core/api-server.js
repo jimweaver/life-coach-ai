@@ -2611,6 +2611,111 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/deploy-events/anomalies/telemetry/alerts/suppression/anomalies/suppression', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 60);
+      const limit = Number(req.query.limit || 5000);
+      const bucketLimit = Number(req.query.bucketLimit || 500);
+
+      const routeEnabled = req.query.route === undefined
+        ? deployTrendTelemetrySuppressionAlertRoutingPolicy.routeEnabled
+        : String(req.query.route).toLowerCase() !== 'false';
+
+      const routeMinLevel = String(req.query.routeMinLevel || deployTrendTelemetrySuppressionAlertRoutingPolicy.routeMinLevel).toLowerCase();
+      if (!['info', 'warn', 'warning', 'critical'].includes(routeMinLevel)) {
+        return badRequest(res, ['routeMinLevel must be one of info|warn|warning|critical']);
+      }
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20000) {
+        return badRequest(res, ['limit must be an integer between 1 and 20000']);
+      }
+
+      if (!Number.isInteger(bucketLimit) || bucketLimit < 1 || bucketLimit > 5000) {
+        return badRequest(res, ['bucketLimit must be an integer between 1 and 5000']);
+      }
+
+      const trend = await db.getDeployTrendTelemetryAlertSuppressionTrend({
+        sinceMinutes,
+        bucketMinutes,
+        runId,
+        source,
+        limit,
+        bucketLimit
+      });
+
+      const alert = deployTrendTelemetrySuppressionAlertDetector.evaluate({ trend });
+
+      const routeCandidate = routeEnabled
+        && alert.should_notify
+        && (deployTrendLevelRank[alert.level] || 1) >= (deployTrendLevelRank[routeMinLevel] || 2);
+
+      const suppression = routeCandidate
+        ? await evaluateDeployTrendTelemetrySuppressionAlertSuppression(alert)
+        : {
+          enabled: !!deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionEnabled,
+          suppressed: false,
+          reason: 'route_not_candidate',
+          remaining_ms: 0,
+          duplicate_match: false,
+          current_signature: buildDeployTrendTelemetrySuppressionAlertSignature(alert),
+          state: await loadDeployTrendTelemetrySuppressionAlertRouteState()
+        };
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          limit,
+          bucketLimit
+        },
+        route: {
+          enabled: routeEnabled,
+          min_level: routeMinLevel,
+          candidate: !!routeCandidate
+        },
+        suppression,
+        alert: {
+          level: alert.level,
+          alert_detected: alert.alert_detected,
+          reasons: alert.reasons,
+          metrics: alert.metrics
+        },
+        trend_summary: {
+          sample_size: trend.sample_size,
+          bucket_count: trend.bucket_count,
+          bucket_minutes: trend.bucket_minutes,
+          latest_bucket: Array.isArray(trend.buckets) && trend.buckets.length
+            ? trend.buckets[trend.buckets.length - 1]
+            : null
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/jobs/deploy-events/anomalies', async (req, res) => {
     try {
       const runId = req.query.runId ? String(req.query.runId).trim() : null;

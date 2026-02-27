@@ -51,6 +51,7 @@
     "test:deploy-telemetry-alert-suppression-trend": "node test-deploy-trend-telemetry-alert-suppression-trend.js",
     "test:deploy-telemetry-suppression-alert": "node test-deploy-trend-telemetry-suppression-alert.js",
     "test:deploy-telemetry-suppression-alert-suppression": "node test-deploy-trend-telemetry-suppression-alert-suppression.js",
+    "test:deploy-telemetry-suppression-alert-suppression-observability": "node test-deploy-trend-telemetry-suppression-alert-suppression-observability.js",
     "test:deploy-trend": "node test-deploy-event-trend.js",
     "test:deploy-smoke": "node test-deploy-smoke-wrapper.js",
     "test:deploy-canary": "node test-deploy-canary-wrapper.js",
