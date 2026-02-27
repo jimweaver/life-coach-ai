@@ -92,7 +92,12 @@ async function createServer() {
     routeMinLevel: String(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
     routeUserId: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_USER_ID || deployTrendTelemetryAlertRoutingPolicy.routeUserId || null,
     routeChannel: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_CHANNEL || deployTrendTelemetryAlertRoutingPolicy.routeChannel || 'cron-event',
-    routeRetryMax: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_RETRY_MAX || deployTrendTelemetryAlertRoutingPolicy.routeRetryMax || 1)
+    routeRetryMax: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_ROUTE_RETRY_MAX || deployTrendTelemetryAlertRoutingPolicy.routeRetryMax || 1),
+    suppressionEnabled: String(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ENABLED || 'true').toLowerCase() !== 'false',
+    suppressionCooldownMinutes: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_COOLDOWN_MINUTES || 30),
+    suppressionDuplicateWindowMinutes: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_DUPLICATE_WINDOW_MINUTES || 120),
+    suppressionStateKey: process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_STATE_KEY || 'lifecoach:deploy-trend-telemetry-suppression-alert:suppression',
+    suppressionStateTtlSec: Number(process.env.DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_STATE_TTL_SEC || 604800)
   };
 
   const ownershipDriftRoutingPolicy = {
@@ -134,6 +139,12 @@ async function createServer() {
   };
 
   let deployTrendTelemetryAlertRouteStateMemory = {
+    last_routed_at_ms: 0,
+    last_signature: null,
+    last_level: 'info'
+  };
+
+  let deployTrendTelemetrySuppressionAlertRouteStateMemory = {
     last_routed_at_ms: 0,
     last_signature: null,
     last_level: 'info'
@@ -832,6 +843,125 @@ async function createServer() {
     };
   };
 
+  const buildDeployTrendTelemetrySuppressionAlertSignature = (alert) => {
+    const level = String(alert?.level || 'info').toLowerCase();
+    const reasons = Array.isArray(alert?.reasons)
+      ? [...new Set(alert.reasons.map((x) => String(x || '').trim()).filter(Boolean))].sort()
+      : [];
+
+    return JSON.stringify({ level, reasons });
+  };
+
+  const loadDeployTrendTelemetrySuppressionAlertRouteState = async () => {
+    if (!deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionEnabled) {
+      return {
+        ...deployTrendTelemetrySuppressionAlertRouteStateMemory,
+        source: 'disabled'
+      };
+    }
+
+    if (!db.redis || !deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionStateKey) {
+      return {
+        ...deployTrendTelemetrySuppressionAlertRouteStateMemory,
+        source: 'memory'
+      };
+    }
+
+    try {
+      const raw = await db.redis.get(deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionStateKey);
+      if (!raw) {
+        return {
+          ...deployTrendTelemetrySuppressionAlertRouteStateMemory,
+          source: 'redis'
+        };
+      }
+
+      const parsed = JSON.parse(raw);
+      return {
+        last_routed_at_ms: Number(parsed.last_routed_at_ms || 0),
+        last_signature: parsed.last_signature || null,
+        last_level: parsed.last_level || 'info',
+        source: 'redis'
+      };
+    } catch (_e) {
+      return {
+        ...deployTrendTelemetrySuppressionAlertRouteStateMemory,
+        source: 'memory-fallback'
+      };
+    }
+  };
+
+  const saveDeployTrendTelemetrySuppressionAlertRouteState = async (state) => {
+    deployTrendTelemetrySuppressionAlertRouteStateMemory = {
+      last_routed_at_ms: Number(state.last_routed_at_ms || 0),
+      last_signature: state.last_signature || null,
+      last_level: state.last_level || 'info'
+    };
+
+    if (!deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionEnabled) return;
+    if (!db.redis || !deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionStateKey) return;
+
+    try {
+      await db.redis.setex(
+        deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionStateKey,
+        Math.max(60, deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionStateTtlSec),
+        JSON.stringify(deployTrendTelemetrySuppressionAlertRouteStateMemory)
+      );
+    } catch (_e) {
+      // best effort only
+    }
+  };
+
+  const evaluateDeployTrendTelemetrySuppressionAlertSuppression = async (alert) => {
+    if (!deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionEnabled) {
+      return {
+        enabled: false,
+        suppressed: false,
+        reason: 'suppression_disabled',
+        remaining_ms: 0,
+        duplicate_match: false,
+        state: { ...deployTrendTelemetrySuppressionAlertRouteStateMemory }
+      };
+    }
+
+    const now = Date.now();
+    const state = await loadDeployTrendTelemetrySuppressionAlertRouteState();
+
+    const cooldownMs = Math.max(0, deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionCooldownMinutes) * 60_000;
+    const duplicateWindowMs = Math.max(0, deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionDuplicateWindowMinutes) * 60_000;
+
+    const elapsedMs = Math.max(0, now - Number(state.last_routed_at_ms || 0));
+    const currentSignature = buildDeployTrendTelemetrySuppressionAlertSignature(alert);
+    const duplicateMatch = !!state.last_signature && state.last_signature === currentSignature;
+
+    const inCooldown = Number(state.last_routed_at_ms || 0) > 0 && elapsedMs < cooldownMs;
+    const inDuplicateWindow = duplicateMatch && Number(state.last_routed_at_ms || 0) > 0 && elapsedMs < duplicateWindowMs;
+
+    let suppressed = false;
+    let reason = 'allowed';
+    let remainingMs = 0;
+
+    if (inDuplicateWindow) {
+      suppressed = true;
+      reason = 'duplicate_window';
+      remainingMs = Math.max(0, duplicateWindowMs - elapsedMs);
+    } else if (inCooldown) {
+      suppressed = true;
+      reason = 'cooldown';
+      remainingMs = Math.max(0, cooldownMs - elapsedMs);
+    }
+
+    return {
+      enabled: true,
+      suppressed,
+      reason,
+      remaining_ms: remainingMs,
+      duplicate_match: duplicateMatch,
+      current_signature: currentSignature,
+      state
+    };
+  };
+
   app.get('/health', async (_req, res) => {
     const status = await db.testConnections();
     res.json({
@@ -943,6 +1073,10 @@ async function createServer() {
         route_user_id_configured: !!deployTrendTelemetrySuppressionAlertRoutingPolicy.routeUserId,
         route_channel: deployTrendTelemetrySuppressionAlertRoutingPolicy.routeChannel,
         route_retry_max: deployTrendTelemetrySuppressionAlertRoutingPolicy.routeRetryMax,
+        suppression_enabled: deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionEnabled,
+        suppression_cooldown_minutes: deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionCooldownMinutes,
+        suppression_duplicate_window_minutes: deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionDuplicateWindowMinutes,
+        suppression_state_key_configured: !!deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionStateKey,
         warn_cooldown_share: deployTrendTelemetrySuppressionAlertDetector.warnCooldownShare,
         critical_cooldown_share: deployTrendTelemetrySuppressionAlertDetector.criticalCooldownShare,
         warn_duplicate_window_share: deployTrendTelemetrySuppressionAlertDetector.warnDuplicateWindowShare,
@@ -2291,8 +2425,22 @@ async function createServer() {
         && alert.should_notify
         && (deployTrendLevelRank[alert.level] || 1) >= (deployTrendLevelRank[routeMinLevel] || 2);
 
+      const suppression = routeCandidate
+        ? await evaluateDeployTrendTelemetrySuppressionAlertSuppression(alert)
+        : {
+          enabled: !!deployTrendTelemetrySuppressionAlertRoutingPolicy.suppressionEnabled,
+          suppressed: false,
+          reason: 'route_not_candidate',
+          remaining_ms: 0,
+          duplicate_match: false,
+          current_signature: null,
+          state: await loadDeployTrendTelemetrySuppressionAlertRouteState()
+        };
+
+      const routeBlockedBySuppression = routeCandidate && suppression?.suppressed === true;
+
       let routed = null;
-      if (routeCandidate) {
+      if (routeCandidate && !routeBlockedBySuppression) {
         const reasonsText = Array.isArray(alert.reasons) && alert.reasons.length
           ? alert.reasons.join(', ')
           : 'n/a';
@@ -2324,6 +2472,14 @@ async function createServer() {
               bucket_count: trend.bucket_count,
               totals: trend.totals
             },
+            suppression: {
+              enabled: suppression?.enabled,
+              suppressed: false,
+              reason: suppression?.reason || 'allowed',
+              remaining_ms: suppression?.remaining_ms || 0,
+              duplicate_match: !!suppression?.duplicate_match,
+              state: suppression?.state || null
+            },
             alert
           },
           options: {
@@ -2332,6 +2488,53 @@ async function createServer() {
             retryMax: routeRetryMax
           }
         });
+      }
+
+      const routeAttempted = routeCandidate && !routeBlockedBySuppression && !!routed;
+
+      if (routeAttempted) {
+        await saveDeployTrendTelemetrySuppressionAlertRouteState({
+          last_routed_at_ms: Date.now(),
+          last_signature: suppression.current_signature || buildDeployTrendTelemetrySuppressionAlertSignature(alert),
+          last_level: alert.level || 'info'
+        });
+      }
+
+      if (emitAudit && routeBlockedBySuppression) {
+        try {
+          await db.logAgentAction(
+            'deploy-trend',
+            null,
+            null,
+            'deploy_trend_telemetry_suppression_alert_route_suppressed',
+            null,
+            'success',
+            null,
+            {
+              filters: {
+                runId,
+                source,
+                sinceMinutes,
+                bucketMinutes,
+                limit,
+                bucketLimit
+              },
+              alert,
+              suppression,
+              route: {
+                enabled: routeEnabled,
+                min_level: routeMinLevel,
+                candidate: true,
+                suppressed: true,
+                target_user_id: routeUserId || null,
+                target_channel: routeChannel,
+                route_retry_max: routeRetryMax
+              }
+            }
+          );
+        } catch (_e) {
+          // best effort only
+        }
       }
 
       if (emitAudit && alert.alert_detected) {
@@ -2363,6 +2566,9 @@ async function createServer() {
                 enabled: routeEnabled,
                 min_level: routeMinLevel,
                 candidate: !!routeCandidate,
+                attempted: !!routeAttempted,
+                suppressed: !!routeBlockedBySuppression,
+                suppression,
                 routed,
                 target_user_id: routeUserId || null,
                 target_channel: routeChannel,
@@ -2391,10 +2597,13 @@ async function createServer() {
           enabled: routeEnabled,
           min_level: routeMinLevel,
           candidate: !!routeCandidate,
+          attempted: !!routeAttempted,
+          suppressed: !!routeBlockedBySuppression,
           target_user_id: routeUserId || null,
           target_channel: routeChannel,
           retry_max: routeRetryMax
         },
+        suppression,
         routed
       });
     } catch (err) {

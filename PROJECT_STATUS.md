@@ -537,12 +537,27 @@ Updated: 2026-02-27
    - Added npm script: `test:deploy-telemetry-suppression-alert`
    - Deployment ops + readiness docs updated with suppression threshold alert endpoint/test gates
 
+60. **Telemetry suppression-alert routing suppression controls added (cooldown + duplicate paging guard)**
+   - Added suppression policy for suppression-alert routes in `core/api-server.js`:
+     - `DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_SUPPRESSION_ENABLED`
+     - `DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_COOLDOWN_MINUTES`
+     - `DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_DUPLICATE_WINDOW_MINUTES`
+     - `DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_STATE_KEY`
+     - `DEPLOY_TREND_TELEMETRY_SUPPRESSION_ALERT_STATE_TTL_SEC`
+   - Added suppression state helpers (`build/load/save/evaluate`) with Redis + memory fallback
+   - `GET /jobs/deploy-events/anomalies/telemetry/alerts/suppression/anomalies` now returns `suppression` and blocks duplicate/cooldown routes
+   - Added suppression audit action: `deploy_trend_telemetry_suppression_alert_route_suppressed`
+   - `/health` policy snapshot now includes suppression-alert suppression controls
+   - Added coverage: `test-deploy-trend-telemetry-suppression-alert-suppression.js`
+   - Added npm script: `test:deploy-telemetry-suppression-alert-suppression`
+   - Deployment ops + readiness docs updated with suppression guard validation
+
 ---
 
 ## In progress / next
 
 1. Continue production readiness hardening (observability + graceful shutdown + managed smoke orchestration)
-2. Add suppression/cooldown controls for telemetry suppression-alert routing (duplicate paging guard)
+2. Add suppression observability endpoint for telemetry suppression-alert routing (state + cooldown remaining)
 3. Advance skill-learning hook rollout + auto-learn validation across agents
 
 ---
@@ -610,6 +625,7 @@ npm run test:deploy-telemetry-alert-suppression
 npm run test:deploy-telemetry-alert-suppression-observability
 npm run test:deploy-telemetry-alert-suppression-trend
 npm run test:deploy-telemetry-suppression-alert
+npm run test:deploy-telemetry-suppression-alert-suppression
 npm run test:deploy-suppression
 npm run test:deploy-dashboard
 npm run test:deploy-smoke
