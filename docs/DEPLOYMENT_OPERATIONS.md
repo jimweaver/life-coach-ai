@@ -156,12 +156,16 @@ Deploy event analytics APIs:
 - `GET /jobs/deploy-events/summary`
   - filters: `runId`, `sinceMinutes`
   - grouped output by `event + level`
+- `GET /jobs/deploy-events/trend`
+  - filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, `runLimit`, `timelineLimit`, `heatmapLimit`
+  - returns per-run timeline buckets + failure heatmap
 
 Validation:
 
 ```bash
 npm run test:deploy-sink
 npm run test:deploy-analytics
+npm run test:deploy-trend
 ```
 
 ---

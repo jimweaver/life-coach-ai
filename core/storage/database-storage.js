@@ -752,6 +752,128 @@ class DatabaseStorageManager {
     return result.rows;
   }
 
+  async summarizeDeployRuns({
+    sinceMinutes = 240,
+    runId = null,
+    source = null,
+    limit = 50
+  } = {}) {
+    await this.ensureDeployRunEventsTable();
+
+    let query = `SELECT run_id,
+                        source,
+                        MIN(event_ts) AS first_event_at,
+                        MAX(event_ts) AS last_event_at,
+                        COUNT(*)::int AS total_events,
+                        COUNT(*) FILTER (WHERE level = 'error')::int AS error_events,
+                        COUNT(*) FILTER (WHERE level = 'warn')::int AS warn_events,
+                        COUNT(*) FILTER (WHERE level = 'info')::int AS info_events,
+                        COUNT(*) FILTER (WHERE level = 'debug')::int AS debug_events
+                 FROM deploy_run_events
+                 WHERE event_ts >= NOW() - ($1 * INTERVAL '1 minute')`;
+
+    const params = [sinceMinutes];
+
+    if (runId) {
+      params.push(runId);
+      query += ` AND run_id = $${params.length}`;
+    }
+
+    if (source) {
+      params.push(source);
+      query += ` AND source = $${params.length}`;
+    }
+
+    query += ` GROUP BY run_id, source
+               ORDER BY MAX(event_ts) DESC
+               LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await this.postgres.query(query, params);
+    return result.rows;
+  }
+
+  async getDeployEventTimeline({
+    sinceMinutes = 240,
+    bucketMinutes = 15,
+    runId = null,
+    source = null,
+    limit = 1000
+  } = {}) {
+    await this.ensureDeployRunEventsTable();
+
+    let query = `SELECT run_id,
+                        source,
+                        to_timestamp(FLOOR(EXTRACT(EPOCH FROM event_ts) / ($1 * 60)) * ($1 * 60)) AS bucket_start,
+                        COUNT(*)::int AS total_events,
+                        COUNT(*) FILTER (WHERE level = 'error')::int AS error_events,
+                        COUNT(*) FILTER (WHERE level = 'warn')::int AS warn_events,
+                        COUNT(*) FILTER (WHERE level = 'info')::int AS info_events,
+                        COUNT(*) FILTER (WHERE level = 'debug')::int AS debug_events
+                 FROM deploy_run_events
+                 WHERE event_ts >= NOW() - ($2 * INTERVAL '1 minute')`;
+
+    const params = [bucketMinutes, sinceMinutes];
+
+    if (runId) {
+      params.push(runId);
+      query += ` AND run_id = $${params.length}`;
+    }
+
+    if (source) {
+      params.push(source);
+      query += ` AND source = $${params.length}`;
+    }
+
+    query += ` GROUP BY run_id, source, bucket_start
+               ORDER BY bucket_start DESC, run_id NULLS LAST
+               LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await this.postgres.query(query, params);
+    return result.rows;
+  }
+
+  async getDeployEventHeatmap({
+    sinceMinutes = 240,
+    runId = null,
+    source = null,
+    limit = 200
+  } = {}) {
+    await this.ensureDeployRunEventsTable();
+
+    let query = `SELECT event,
+                        COUNT(*) FILTER (WHERE level = 'error')::int AS error_count,
+                        COUNT(*) FILTER (WHERE level = 'warn')::int AS warn_count,
+                        COUNT(*) FILTER (WHERE level = 'info')::int AS info_count,
+                        COUNT(*) FILTER (WHERE level = 'debug')::int AS debug_count,
+                        COUNT(*)::int AS total_count
+                 FROM deploy_run_events
+                 WHERE event_ts >= NOW() - ($1 * INTERVAL '1 minute')`;
+
+    const params = [sinceMinutes];
+
+    if (runId) {
+      params.push(runId);
+      query += ` AND run_id = $${params.length}`;
+    }
+
+    if (source) {
+      params.push(source);
+      query += ` AND source = $${params.length}`;
+    }
+
+    query += ` GROUP BY event
+               ORDER BY (COUNT(*) FILTER (WHERE level = 'error') + COUNT(*) FILTER (WHERE level = 'warn')) DESC,
+                        COUNT(*) DESC,
+                        event ASC
+               LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await this.postgres.query(query, params);
+    return result.rows;
+  }
+
   // ========== Scheduler Support ==========
 
   async listUserIds(limit = 100) {

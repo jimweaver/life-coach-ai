@@ -785,6 +785,99 @@ async function createServer() {
     }
   });
 
+  app.get('/jobs/deploy-events/trend', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 15);
+      const runLimit = Number(req.query.runLimit || 50);
+      const timelineLimit = Number(req.query.timelineLimit || 1000);
+      const heatmapLimit = Number(req.query.heatmapLimit || 200);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 200) {
+        return badRequest(res, ['runLimit must be an integer between 1 and 200']);
+      }
+
+      if (!Number.isInteger(timelineLimit) || timelineLimit < 1 || timelineLimit > 5000) {
+        return badRequest(res, ['timelineLimit must be an integer between 1 and 5000']);
+      }
+
+      if (!Number.isInteger(heatmapLimit) || heatmapLimit < 1 || heatmapLimit > 1000) {
+        return badRequest(res, ['heatmapLimit must be an integer between 1 and 1000']);
+      }
+
+      const [runs, timeline, heatmapRows] = await Promise.all([
+        db.summarizeDeployRuns({
+          sinceMinutes,
+          runId,
+          source,
+          limit: runLimit
+        }),
+        db.getDeployEventTimeline({
+          sinceMinutes,
+          bucketMinutes,
+          runId,
+          source,
+          limit: timelineLimit
+        }),
+        db.getDeployEventHeatmap({
+          sinceMinutes,
+          runId,
+          source,
+          limit: heatmapLimit
+        })
+      ]);
+
+      const heatmapTotals = heatmapRows.reduce((acc, row) => {
+        acc.total += Number(row.total_count || 0);
+        acc.error += Number(row.error_count || 0);
+        acc.warn += Number(row.warn_count || 0);
+        acc.info += Number(row.info_count || 0);
+        acc.debug += Number(row.debug_count || 0);
+        return acc;
+      }, { total: 0, error: 0, warn: 0, info: 0, debug: 0 });
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          runLimit,
+          timelineLimit,
+          heatmapLimit
+        },
+        runs,
+        timeline,
+        heatmap: {
+          rows: heatmapRows,
+          totals: heatmapTotals,
+          peak_event: heatmapRows[0]?.event || null
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/jobs/delivery/alerts', async (req, res) => {
     try {
       const windowMinutes = Number(req.query.windowMinutes || 60);

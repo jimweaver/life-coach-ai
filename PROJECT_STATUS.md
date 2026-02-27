@@ -358,13 +358,27 @@ Updated: 2026-02-27
    - Added coverage: `test-canary-drift-trend.js`
    - Deployment/readiness docs updated with trend gate
 
+44. **Deploy event trend dashboard endpoint added (timeline + failure heatmap)**
+   - Added DB trend helpers:
+     - `summarizeDeployRuns(...)`
+     - `getDeployEventTimeline(...)`
+     - `getDeployEventHeatmap(...)`
+   - New API endpoint: `GET /jobs/deploy-events/trend`
+   - Provides:
+     - per-run summary (`runs`)
+     - bucketed timeline (`timeline`)
+     - failure heatmap (`heatmap.rows` + totals)
+   - Supports filters: `runId`, `source`, `sinceMinutes`, `bucketMinutes`, limits
+   - Added coverage: `test-deploy-event-trend.js`
+   - Deployment ops docs updated with trend endpoint usage
+
 ---
 
 ## In progress / next
 
-1. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
-2. Add ownership drift suppression controls (cooldown + duplicate alert window)
-3. Add canary drift auto-suppression controls (prevent duplicate drift paging within cooldown)
+1. Add ownership drift suppression controls (cooldown + duplicate alert window)
+2. Add canary drift auto-suppression controls (prevent duplicate drift paging within cooldown)
+3. Add deploy trend anomaly detector (spike/latency failure regression alerts)
 
 ---
 
@@ -421,6 +435,7 @@ npm run test:deploy
 npm run test:deploy-observability
 npm run test:deploy-sink
 npm run test:deploy-analytics
+npm run test:deploy-trend
 npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary
