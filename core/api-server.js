@@ -1138,6 +1138,90 @@ async function createServer() {
     });
   });
 
+  // Deep health check with comprehensive diagnostics
+  app.get('/health/deep', async (_req, res) => {
+    const startTime = Date.now();
+    const checks = {};
+
+    // Basic connectivity check
+    try {
+      const connStatus = await db.testConnections();
+      checks.connectivity = {
+        ok: connStatus.redis && connStatus.postgres,
+        redis: connStatus.redis,
+        postgres: connStatus.postgres
+      };
+    } catch (err) {
+      checks.connectivity = { ok: false, error: err.message };
+    }
+
+    // Pool metrics check
+    try {
+      const poolMetrics = db.getPoolMetrics();
+      checks.pool_health = {
+        ok: poolMetrics.healthy.overall,
+        postgres: {
+          ok: poolMetrics.healthy.postgres,
+          utilization: Math.round(poolMetrics.postgres.utilization * 100) + '%',
+          waiting: poolMetrics.postgres.waiting
+        },
+        redis: {
+          ok: poolMetrics.healthy.redis,
+          status: poolMetrics.redis.status
+        }
+      };
+    } catch (err) {
+      checks.pool_health = { ok: false, error: err.message };
+    }
+
+    // Query performance check (simple test query)
+    try {
+      const queryStart = Date.now();
+      await db.postgres?.query('SELECT 1 as ping');
+      checks.query_performance = {
+        ok: true,
+        latency_ms: Date.now() - queryStart
+      };
+    } catch (err) {
+      checks.query_performance = { ok: false, error: err.message };
+    }
+
+    // Memory usage check
+    const memUsage = process.memoryUsage();
+    checks.memory = {
+      ok: memUsage.heapUsed < 512 * 1024 * 1024, // 512MB threshold
+      heap_used_mb: Math.round(memUsage.heapUsed / 1024 / 1024),
+      heap_total_mb: Math.round(memUsage.heapTotal / 1024 / 1024),
+      rss_mb: Math.round(memUsage.rss / 1024 / 1024)
+    };
+
+    // Active connections check
+    checks.connections = {
+      ok: sockets.size < 1000, // 1000 connections threshold
+      active_sockets: sockets.size,
+      total_tracked: connections.size
+    };
+
+    // Shutdown status
+    checks.shutdown_status = {
+      ok: !isShuttingDown,
+      shutting_down: isShuttingDown,
+      graceful_shutdown_ms: gracefulShutdownMs
+    };
+
+    // Determine overall health
+    const allOk = Object.values(checks).every(c => c.ok);
+
+    const response = {
+      ok: allOk,
+      checks,
+      latency_ms: Date.now() - startTime,
+      timestamp: new Date().toISOString()
+    };
+
+    res.status(allOk ? 200 : 503).json(response);
+  });
+
   app.get('/ready', (_req, res) => {
     if (isShuttingDown) {
       return res.status(503).json({

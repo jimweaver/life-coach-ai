@@ -655,13 +655,23 @@ Updated: 2026-02-27
    - Added npm script: `test:pool-metrics`
    - Graceful shutdown test passes
 
+71. **Deep health check endpoint**
+   - Added `GET /health/deep` endpoint for comprehensive diagnostics
+   - Checks: connectivity, pool_health, query_performance, memory, connections, shutdown_status
+   - Each check includes ok status and detailed metrics
+   - Returns HTTP 200 if healthy, HTTP 503 if any check fails
+   - Includes overall latency measurement
+   - Added test: `test-deep-health.js`
+   - Added npm script: `test:deep-health`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add health check endpoint extensions for deep checks
-2. Add orchestrator performance metrics endpoint
-3. Add API request latency histogram metrics
+1. Add orchestrator performance metrics endpoint
+2. Add API request latency histogram metrics
+3. Add database query performance tracking
 
 ---
 
