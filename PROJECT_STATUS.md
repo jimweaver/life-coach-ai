@@ -110,13 +110,20 @@ Updated: 2026-02-27
    - `/health` now exposes `rate_limit_policy`
    - Added test: `test-rate-limit-policy.js`
 
+15. **Data source quality filters upgraded**
+   - `core/data-collector.js` now applies freshness scoring in ranking
+   - Added stale-source filtering (`DATA_COLLECTOR_MAX_SOURCE_AGE_DAYS`)
+   - Added source dedupe by canonical URL/text fingerprint
+   - Snapshot quality block now reports filter metrics (`stale_removed`, `dedupe_removed`, etc.)
+   - Extended test coverage in `test-data-collector.js`
+
 ---
 
 ## In progress / next
 
 1. Add scheduler delivery observability dashboard/query endpoint (queue depth + failure rate)
-2. Add external-source quality checks (freshness + duplicate suppression) for data collector
-3. Add delivery retry/backoff + dead-letter handling for cron-event transport
+2. Add delivery retry/backoff + dead-letter handling for cron-event transport
+3. Add data-collector quality telemetry endpoint/reporting (surface quality block via API)
 4. Prepare deployment profile (OpenClaw-hosted + local DB)
 
 ---

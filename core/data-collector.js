@@ -3,6 +3,9 @@ class DataCollector {
     this.braveApiKey = options.braveApiKey ?? process.env.BRAVE_API_KEY ?? null;
     this.braveEndpoint = 'https://api.search.brave.com/res/v1/web/search';
 
+    this.maxSourceAgeDays = Number(options.maxSourceAgeDays ?? process.env.DATA_COLLECTOR_MAX_SOURCE_AGE_DAYS ?? 1200);
+    this.enableDedupe = options.enableDedupe ?? String(process.env.DATA_COLLECTOR_ENABLE_DEDUPE || 'true').toLowerCase() !== 'false';
+
     this.queryByDomain = {
       career: (input) => `${input} career market trend hiring skills`,
       health: (input) => `${input} stress sleep evidence based recommendations`,
@@ -64,20 +67,107 @@ class DataCollector {
     return Math.min(1, hit / 4);
   }
 
+  parsePublishedAt(value) {
+    if (!value) return null;
+    const ts = Date.parse(value);
+    if (Number.isNaN(ts)) return null;
+    return new Date(ts);
+  }
+
+  freshnessScore(publishedAt) {
+    if (!publishedAt) return 0.45;
+
+    const ageMs = Date.now() - publishedAt.getTime();
+    if (ageMs < 0) return 0.6;
+
+    const ageDays = ageMs / 86_400_000;
+
+    if (ageDays <= 7) return 1;
+    if (ageDays <= 30) return 0.9;
+    if (ageDays <= 90) return 0.75;
+    if (ageDays <= 180) return 0.6;
+    if (ageDays <= 365) return 0.45;
+    return 0.25;
+  }
+
+  isTooOld(publishedAt) {
+    if (!publishedAt) return false;
+    const ageDays = (Date.now() - publishedAt.getTime()) / 86_400_000;
+    return ageDays > this.maxSourceAgeDays;
+  }
+
+  canonicalSourceKey(result = {}) {
+    const title = String(result.title || '').trim().toLowerCase();
+    const description = String(result.description || '').trim().toLowerCase();
+
+    try {
+      if (result.url) {
+        const u = new URL(result.url);
+        const host = u.hostname.toLowerCase();
+        const path = u.pathname.replace(/\/+$/, '').toLowerCase() || '/';
+        return `url:${host}${path}`;
+      }
+    } catch (_e) {
+      // fallback below
+    }
+
+    const compact = `${title}|${description}`.replace(/\s+/g, ' ').slice(0, 180);
+    return `text:${compact}`;
+  }
+
+  dedupeResults(results = []) {
+    if (!this.enableDedupe) return results;
+
+    const seen = new Set();
+    const output = [];
+
+    for (const item of results) {
+      const key = this.canonicalSourceKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      output.push(item);
+    }
+
+    return output;
+  }
+
+  normalizeExternalResult(result = {}) {
+    const publishedAt = this.parsePublishedAt(result.publishedAt || result.age || result.published_time || result.page_age || null);
+
+    return {
+      title: result.title || 'Untitled source',
+      url: result.url || null,
+      description: result.description || '',
+      published_at: publishedAt ? publishedAt.toISOString() : null,
+      _publishedDate: publishedAt
+    };
+  }
+
+  preprocessExternalResults(rawResults = []) {
+    const normalized = rawResults.map((r) => this.normalizeExternalResult(r));
+
+    const filteredByAge = normalized.filter((r) => !this.isTooOld(r._publishedDate));
+    const deduped = this.dedupeResults(filteredByAge);
+
+    return deduped;
+  }
+
   scoreResult(domain, query, result) {
     const text = `${result.title || ''} ${result.description || ''}`.trim();
 
     const relevance = this.keywordOverlapScore(query, text);
     const authority = this.authorityScore(result.url);
     const domainFit = this.domainHintScore(domain, text);
+    const freshness = this.freshnessScore(result._publishedDate || this.parsePublishedAt(result.published_at));
 
-    const blended = (relevance * 0.5) + (authority * 0.3) + (domainFit * 0.2);
+    const blended = (relevance * 0.45) + (authority * 0.25) + (domainFit * 0.15) + (freshness * 0.15);
     const normalized = Math.max(0.05, Math.min(0.99, blended));
 
     return {
       relevance: Number(relevance.toFixed(3)),
       authority: Number(authority.toFixed(3)),
       domain_fit: Number(domainFit.toFixed(3)),
+      freshness: Number(freshness.toFixed(3)),
       score: Number(normalized.toFixed(3)),
       confidence: Number((0.25 + normalized * 0.75).toFixed(3))
     };
@@ -100,6 +190,7 @@ class DataCollector {
           url: r.url || null,
           description: r.description || '',
           source_host: sourceHost,
+          published_at: r.published_at || null,
           ...metrics
         };
       })
@@ -112,7 +203,7 @@ class DataCollector {
     return ranked;
   }
 
-  buildSnapshot({ provider, domain, query, rankedResults, mode, reason = null }) {
+  buildSnapshot({ provider, domain, query, rankedResults, mode, reason = null, quality = {} }) {
     const top = rankedResults.slice(0, 3);
     const confidence = top.length
       ? Number((top.reduce((sum, item) => sum + item.confidence, 0) / top.length).toFixed(3))
@@ -127,11 +218,13 @@ class DataCollector {
       confidence,
       reason,
       total_results: rankedResults.length,
+      quality,
       citations: top.map((x) => ({
         rank: x.rank,
         title: x.title,
         url: x.url,
         source_host: x.source_host,
+        published_at: x.published_at,
         confidence: x.confidence
       })),
       results: top
@@ -161,7 +254,8 @@ class DataCollector {
     return (data?.web?.results || []).slice(0, count).map((r) => ({
       title: r.title,
       url: r.url,
-      description: r.description
+      description: r.description,
+      publishedAt: r.age || r.page_age || r.published_at || r.published_time || null
     }));
   }
 
@@ -170,7 +264,9 @@ class DataCollector {
       {
         title: 'No external source configured',
         url: null,
-        description: `Fallback mode enabled: ${reason}`
+        description: `Fallback mode enabled: ${reason}`,
+        published_at: null,
+        _publishedDate: null
       }
     ];
 
@@ -179,66 +275,86 @@ class DataCollector {
         {
           title: 'Career fallback heuristic',
           url: null,
-          description: 'Focus on JD gap analysis + portfolio outputs + measurable milestones.'
+          description: 'Focus on JD gap analysis + portfolio outputs + measurable milestones.',
+          published_at: null,
+          _publishedDate: null
         },
         {
           title: 'Transition risk checklist',
           url: null,
-          description: 'Set runway, interview pipeline, and skill plan before role transition.'
+          description: 'Set runway, interview pipeline, and skill plan before role transition.',
+          published_at: null,
+          _publishedDate: null
         }
       ],
       finance: [
         {
           title: 'Finance fallback heuristic',
           url: null,
-          description: 'Prioritize cashflow safety and emergency fund before transition spend.'
+          description: 'Prioritize cashflow safety and emergency fund before transition spend.',
+          published_at: null,
+          _publishedDate: null
         },
         {
           title: 'Budget-first transition policy',
           url: null,
-          description: 'Use monthly burn-rate control and cap optional learning spend.'
+          description: 'Use monthly burn-rate control and cap optional learning spend.',
+          published_at: null,
+          _publishedDate: null
         }
       ],
       health: [
         {
           title: 'Health fallback heuristic',
           url: null,
-          description: 'Prioritize sleep regularity and sustainable stress-reduction routines.'
+          description: 'Prioritize sleep regularity and sustainable stress-reduction routines.',
+          published_at: null,
+          _publishedDate: null
         },
         {
           title: 'Low-overhead baseline routine',
           url: null,
-          description: 'Start with manageable habit loops before high-intensity interventions.'
+          description: 'Start with manageable habit loops before high-intensity interventions.',
+          published_at: null,
+          _publishedDate: null
         }
       ],
       skill: [
         {
           title: 'Skill fallback heuristic',
           url: null,
-          description: 'Use 30/60/90 learning sprints with portfolio-first milestones.'
+          description: 'Use 30/60/90 learning sprints with portfolio-first milestones.',
+          published_at: null,
+          _publishedDate: null
         }
       ],
       relationship: [
         {
           title: 'Relationship fallback heuristic',
           url: null,
-          description: 'Use low-conflict communication scripts and clear shared outcomes.'
+          description: 'Use low-conflict communication scripts and clear shared outcomes.',
+          published_at: null,
+          _publishedDate: null
         }
       ],
       decision: [
         {
           title: 'Decision fallback heuristic',
           url: null,
-          description: 'Compare options by impact, risk, reversibility, and timing window.'
+          description: 'Compare options by impact, risk, reversibility, and timing window.',
+          published_at: null,
+          _publishedDate: null
         }
       ]
     };
 
     const query = (this.queryByDomain[domain] || ((x) => x))(input);
-    const ranked = this.rankResults(domain, query, [
+    const fallbackResults = [
       ...base,
       ...(domainSpecific[domain] || [])
-    ]);
+    ];
+
+    const ranked = this.rankResults(domain, query, fallbackResults);
 
     return this.buildSnapshot({
       provider: 'fallback',
@@ -246,7 +362,12 @@ class DataCollector {
       domain,
       query,
       rankedResults: ranked,
-      reason
+      reason,
+      quality: {
+        dedupe_removed: 0,
+        stale_removed: 0,
+        freshness_enabled: false
+      }
     });
   }
 
@@ -255,15 +376,32 @@ class DataCollector {
     const query = queryBuilder(input);
 
     try {
-      const rawExternal = await this.searchBrave(query, 5);
+      const rawExternal = await this.searchBrave(query, 8);
       if (rawExternal && rawExternal.length) {
-        const ranked = this.rankResults(domain, query, rawExternal);
+        const beforeCount = rawExternal.length;
+        const preprocessed = this.preprocessExternalResults(rawExternal);
+        const staleRemoved = beforeCount - rawExternal.filter((r) => !this.isTooOld(this.parsePublishedAt(r.publishedAt || r.age || r.published_time || null))).length;
+        const dedupeRemoved = Math.max(0, beforeCount - preprocessed.length - staleRemoved);
+
+        if (!preprocessed.length) {
+          return this.fallbackSnapshot(domain, input, 'All external results filtered by quality rules');
+        }
+
+        const ranked = this.rankResults(domain, query, preprocessed);
         return this.buildSnapshot({
           provider: 'brave',
           mode: 'external',
           domain,
           query,
-          rankedResults: ranked
+          rankedResults: ranked,
+          quality: {
+            original_results: beforeCount,
+            post_filter_results: preprocessed.length,
+            stale_removed: staleRemoved,
+            dedupe_removed: dedupeRemoved,
+            freshness_enabled: true,
+            max_source_age_days: this.maxSourceAgeDays
+          }
         });
       }
 
