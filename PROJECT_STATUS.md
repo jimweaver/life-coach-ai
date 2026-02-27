@@ -423,8 +423,9 @@ Updated: 2026-02-27
 
 ## In progress / next
 
-1. Add deploy event trend dashboard endpoint (per-run timeline + failure heatmap)
-2. Add deploy trend suppression controls (cooldown + duplicate anomaly paging guard)
+1. Add deploy trend suppression controls (cooldown + duplicate anomaly paging guard)
+2. Add canary drift suppression observability endpoint (state + cooldown remaining)
+3. Add deploy trend suppression observability endpoint (state + cooldown remaining)
 
 ---
 
