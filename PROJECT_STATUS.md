@@ -246,13 +246,22 @@ Updated: 2026-02-27
    - Added checklist doc: `docs/PRODUCTION_READINESS_CHECKLIST.md`
    - Updated deployment ops doc with shutdown gate references
 
+32. **Deployment smoke orchestration mode added (managed lifecycle)**
+   - `scripts/deploy-wrapper.js` now supports `--smoke=quick|deep|both`
+   - Added commands:
+     - `npm run deploy:smoke`
+     - `npm run deploy:smoke:deep`
+   - Wrapper now performs: start API -> wait `/ready` -> run smoke plan -> graceful stop
+   - Added verification test: `test-deploy-smoke-wrapper.js`
+   - Deployment docs updated (`DEPLOYMENT_PROFILE.md`, `DEPLOYMENT_OPERATIONS.md`)
+
 ---
 
 ## In progress / next
 
-1. Add deployment smoke orchestration mode (run checks against managed process lifecycle)
-2. Add alert destination governance docs (operator ownership + escalation runbook)
-3. Add post-deploy canary flow (quick traffic validation + rollback decision thresholds)
+1. Add alert destination governance docs (operator ownership + escalation runbook)
+2. Add post-deploy canary flow (quick traffic validation + rollback decision thresholds)
+3. Add deploy-wrapper observability hooks (structured deploy-step logs + durations)
 
 ---
 
@@ -262,6 +271,10 @@ Updated: 2026-02-27
 # API
 npm run deploy:preflight
 npm run deploy:up
+
+# Managed smoke orchestration (start -> smoke -> stop)
+npm run deploy:smoke
+npm run deploy:smoke:deep
 
 # Smoke checks (post-deploy)
 npm run smoke:check
@@ -295,6 +308,7 @@ npm run test:alert-routing
 npm run test:alert-policy
 npm run test:inline-retry
 npm run test:deploy
+npm run test:deploy-smoke
 npm run test:graceful
 npm run test:e2e
 ```

@@ -15,15 +15,116 @@ function runNodeScript(scriptPath, args = []) {
   });
 }
 
+function spawnApi(apiScript) {
+  const child = spawn(process.execPath, [apiScript], {
+    stdio: 'inherit',
+    env: process.env
+  });
+
+  const exited = new Promise((resolve) => {
+    child.on('close', (code, signal) => resolve({ code, signal }));
+  });
+
+  return { child, exited };
+}
+
+async function waitForReady({
+  baseUrl,
+  timeoutMs,
+  intervalMs,
+  apiChild
+}) {
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    if (apiChild.exitCode !== null) {
+      return false;
+    }
+
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), Math.min(2000, intervalMs));
+      const res = await fetch(`${baseUrl}/ready`, { signal: controller.signal });
+      clearTimeout(t);
+
+      if (res.status === 200) {
+        const body = await res.json();
+        if (body.ok === true) return true;
+      }
+    } catch (_e) {
+      // retry
+    }
+
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+
+  return false;
+}
+
+async function stopApi(child, {
+  stopTimeoutMs = 10_000
+} = {}) {
+  if (!child || child.exitCode !== null) return;
+
+  const done = new Promise((resolve) => {
+    child.once('close', () => resolve());
+  });
+
+  try {
+    child.kill('SIGTERM');
+  } catch (_e) {
+    // ignore
+  }
+
+  const timeout = new Promise((resolve) => {
+    setTimeout(resolve, stopTimeoutMs);
+  });
+
+  await Promise.race([done, timeout]);
+
+  if (child.exitCode === null) {
+    try {
+      child.kill('SIGKILL');
+    } catch (_e) {
+      // ignore
+    }
+  }
+}
+
+function parseSmokeMode(args) {
+  const kv = args.find((a) => a.startsWith('--smoke='));
+  if (kv) return kv.split('=')[1] || 'quick';
+
+  if (args.includes('--smoke')) return 'quick';
+  return null;
+}
+
+function resolveSmokePlan(modeRaw) {
+  const mode = String(modeRaw || '').toLowerCase();
+
+  if (!mode) return [];
+  if (mode === 'quick') return ['quick'];
+  if (mode === 'deep') return ['deep'];
+  if (mode === 'all' || mode === 'both') return ['quick', 'deep'];
+
+  throw new Error(`Unsupported smoke mode: ${modeRaw}. Use quick|deep|both`);
+}
+
 async function run() {
   const args = process.argv.slice(2);
   const checkOnly = args.includes('--check-only');
   const skipCheck = args.includes('--skip-check');
 
+  const smokeMode = parseSmokeMode(args);
+  const smokePlan = resolveSmokePlan(smokeMode);
+  const smokeEnabled = smokePlan.length > 0;
+
   const profileArg = args.find((a) => a.startsWith('--profile='));
   const profilePath = profileArg ? profileArg.split('=')[1] : null;
 
   const checkScript = path.join(__dirname, 'deployment-check.js');
+  const smokeQuickScript = path.join(__dirname, 'smoke-check.js');
+  const smokeDeepScript = path.join(__dirname, 'smoke-check-deep.js');
   const apiScript = path.join(__dirname, '..', 'core', 'api-server.js');
 
   if (!skipCheck) {
@@ -46,26 +147,66 @@ async function run() {
 
   console.log('🚀 Starting Life Coach API...');
 
-  const api = spawn(process.execPath, [apiScript], {
-    stdio: 'inherit',
-    env: process.env
-  });
+  const { child: api, exited: apiExited } = spawnApi(apiScript);
 
-  const forward = (sig) => {
-    if (!api.killed) api.kill(sig);
-  };
+  if (!smokeEnabled) {
+    const forward = (sig) => {
+      if (!api.killed) api.kill(sig);
+    };
 
-  process.on('SIGINT', () => forward('SIGINT'));
-  process.on('SIGTERM', () => forward('SIGTERM'));
+    process.on('SIGINT', () => forward('SIGINT'));
+    process.on('SIGTERM', () => forward('SIGTERM'));
 
-  api.on('close', (code) => {
-    process.exit(code ?? 0);
-  });
+    api.on('close', (code) => {
+      process.exit(code ?? 0);
+    });
 
-  api.on('error', (err) => {
-    console.error('❌ Failed to start API:', err.message);
+    api.on('error', (err) => {
+      console.error('❌ Failed to start API:', err.message);
+      process.exit(1);
+    });
+
+    return;
+  }
+
+  const baseUrl = process.env.SMOKE_CHECK_BASE_URL || `http://localhost:${process.env.PORT || 8787}`;
+  const readyTimeoutMs = Number(process.env.DEPLOY_WRAPPER_READY_TIMEOUT_MS || 20_000);
+  const readyIntervalMs = Number(process.env.DEPLOY_WRAPPER_READY_INTERVAL_MS || 500);
+
+  try {
+    const ready = await waitForReady({
+      baseUrl,
+      timeoutMs: readyTimeoutMs,
+      intervalMs: readyIntervalMs,
+      apiChild: api
+    });
+
+    if (!ready) {
+      console.error('❌ API did not become ready in time for smoke run.');
+      await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+      process.exit(1);
+    }
+
+    console.log(`🧪 Running smoke plan: ${smokePlan.join(', ')}`);
+
+    for (const step of smokePlan) {
+      const script = step === 'deep' ? smokeDeepScript : smokeQuickScript;
+      const code = await runNodeScript(script);
+      if (code !== 0) {
+        console.error(`❌ Smoke step failed: ${step}`);
+        await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+        process.exit(code);
+      }
+    }
+
+    console.log('✅ deploy-wrapper smoke mode completed successfully.');
+    await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
+    process.exit(0);
+  } catch (err) {
+    console.error('❌ deploy-wrapper smoke mode fatal:', err.message);
+    await stopApi(api, { stopTimeoutMs: Number(process.env.DEPLOY_WRAPPER_STOP_TIMEOUT_MS || 10_000) });
     process.exit(1);
-  });
+  }
 }
 
 run().catch((err) => {

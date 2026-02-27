@@ -6,6 +6,8 @@
 |---------|---------|
 | `npm run deploy:preflight` | Validate env + connectivity before deploy |
 | `npm run deploy:up` | Preflight + start API |
+| `npm run deploy:smoke` | Managed smoke orchestration (start API -> quick smoke -> stop API) |
+| `npm run deploy:smoke:deep` | Managed smoke orchestration (start API -> deep smoke -> stop API) |
 | `npm run smoke:check` | Post-deploy health + sanity checks |
 | `npm run smoke:deep` | Extended checks (DB, Redis, key endpoints) |
 
@@ -36,6 +38,20 @@ Verifies:
 3. PostgreSQL connectivity + schema version
 4. Sample read/write roundtrip (creates + deletes test profile)
 5. Scheduler delivery mode matches expected
+
+### Orchestrated smoke mode (managed lifecycle)
+
+```bash
+npm run deploy:smoke
+npm run deploy:smoke:deep
+```
+
+Wrapper flow:
+1. Run preflight (`deploy:check`)
+2. Start API managed child process
+3. Wait for `/ready`
+4. Run smoke checks (`quick` or `deep`)
+5. Gracefully stop API process
 
 ---
 
