@@ -4,6 +4,7 @@ const AgentLoader = require('./agent-loader');
 const DatabaseStorageManager = require('./storage/database-storage');
 const DomainAgents = require('./domain-agents');
 const ConflictResolver = require('./conflict-resolver');
+const ModelRouter = require('./model-router');
 
 class OrchestratorEngine {
   constructor() {
@@ -11,6 +12,7 @@ class OrchestratorEngine {
     this.db = new DatabaseStorageManager();
     this.domainAgents = new DomainAgents();
     this.conflictResolver = new ConflictResolver();
+    this.modelRouter = new ModelRouter();
     this.agents = null;
   }
 
@@ -78,8 +80,19 @@ class OrchestratorEngine {
   async runDomains(domains, input, context) {
     const targetDomains = domains.length ? domains : ['career'];
 
+    const domainToAgentId = {
+      career: 'career-coach',
+      health: 'health-coach',
+      finance: 'finance-coach'
+    };
+
     const outputs = await Promise.all(
-      targetDomains.map(domain => this.domainAgents.run(domain, input, context))
+      targetDomains.map(async (domain) => {
+        const out = await this.domainAgents.run(domain, input, context);
+        const agentId = domainToAgentId[domain] || `${domain}-coach`;
+        out.model = this.modelRouter.forAgent(agentId);
+        return out;
+      })
     );
 
     const conflicts = this.conflictResolver.detect(outputs);
@@ -127,7 +140,7 @@ class OrchestratorEngine {
   composeUserResponse(domainRun) {
     const blocks = domainRun.outputs.map((o) => {
       const recs = o.recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n');
-      return `【${o.domain.toUpperCase()}】\n${o.summary}\n\n建議：\n${recs}`;
+      return `【${o.domain.toUpperCase()} | model: ${o.model || 'n/a'}】\n${o.summary}\n\n建議：\n${recs}`;
     });
 
     const conflictBlock = domainRun.conflict_notes?.length
