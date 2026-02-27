@@ -151,6 +151,11 @@ async function createServer() {
         require_approval: String(process.env.DEADLETTER_REPLAY_REQUIRE_APPROVAL || 'true').toLowerCase() !== 'false',
         approval_code_configured: !!process.env.DEADLETTER_REPLAY_APPROVAL_CODE
       },
+      delivery_alert_policy: {
+        route_enabled: String(process.env.DELIVERY_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+        route_retry_max: Number(process.env.DELIVERY_ALERT_ROUTE_RETRY_MAX || 1),
+        route_user_id_configured: !!process.env.DELIVERY_ALERT_ROUTE_USER_ID
+      },
       time: new Date().toISOString()
     });
   });
@@ -406,7 +411,17 @@ async function createServer() {
 
       let routed = null;
       if (result.ok && result.should_notify) {
-        routed = await alertRouter.routeDeliveryAlert(result);
+        if (result.alert_delivery) {
+          routed = {
+            routed: !!result.alert_delivery.dispatched,
+            source: 'scheduler',
+            delivery: result.alert_delivery.delivery,
+            outbox: result.alert_delivery.outbox
+          };
+        } else {
+          // fallback path for legacy/disabled scheduler routing
+          routed = await alertRouter.routeDeliveryAlert(result);
+        }
       }
 
       res.json({

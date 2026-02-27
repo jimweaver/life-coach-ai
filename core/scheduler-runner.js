@@ -26,7 +26,10 @@ class SchedulerRunner {
       criticalGrowthStreak: Number(options.criticalGrowthStreak ?? process.env.DELIVERY_ALERT_CRITICAL_GROWTH_STREAK ?? 4),
       cooldownMinutes: Number(options.cooldownMinutes ?? process.env.DELIVERY_ALERT_COOLDOWN_MINUTES ?? 30),
       stateKey: options.alertStateKey ?? process.env.DELIVERY_ALERT_STATE_KEY ?? 'lifecoach:delivery-alert:state',
-      stateTtlSec: Number(options.alertStateTtlSec ?? process.env.DELIVERY_ALERT_STATE_TTL_SEC ?? 604800)
+      stateTtlSec: Number(options.alertStateTtlSec ?? process.env.DELIVERY_ALERT_STATE_TTL_SEC ?? 604800),
+      routeEnabled: options.alertRouteEnabled ?? String(process.env.DELIVERY_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
+      routeRetryMax: Number(options.alertRouteRetryMax ?? process.env.DELIVERY_ALERT_ROUTE_RETRY_MAX ?? 1),
+      routeUserId: options.alertRouteUserId ?? process.env.DELIVERY_ALERT_ROUTE_USER_ID ?? null
     };
   }
 
@@ -106,6 +109,134 @@ class SchedulerRunner {
     return (rank[a] || 0) - (rank[b] || 0);
   }
 
+  buildDeliveryAlertText({ level, reasons, trend, metrics }) {
+    const headline = level === 'critical'
+      ? '🚨 Delivery Alert (CRITICAL)'
+      : '⚠️ Delivery Alert (WARN)';
+
+    const reasonText = Array.isArray(reasons) && reasons.length
+      ? reasons.slice(0, 3).join(' | ')
+      : 'delivery risk threshold reached';
+
+    const dead = trend?.dead_letter_total ?? 0;
+    const growth = trend?.growth ?? 0;
+    const failureRate = metrics?.log?.failure_rate ?? 0;
+
+    return `${headline}\nreasons: ${reasonText}\nmetrics: dead_letter=${dead}, growth=${growth}, failure_rate=${failureRate}`;
+  }
+
+  async dispatchDeliveryAlert({
+    level,
+    reasons,
+    windowMinutes,
+    metrics,
+    trend,
+    config
+  }) {
+    const routeCfg = this.deliveryAlertConfig;
+
+    if (this.delivery?.mode === 'none') {
+      return {
+        dispatched: false,
+        skipped: true,
+        reason: 'delivery_mode_none'
+      };
+    }
+
+    const envelope = {
+      kind: 'systemEvent',
+      text: this.buildDeliveryAlertText({ level, reasons, trend, metrics }),
+      source: 'life-coach-alerting',
+      event_type: 'delivery_alert_triggered',
+      cycle: 'delivery-alert',
+      severity: level,
+      user_id: routeCfg.routeUserId || null,
+      timestamp: new Date().toISOString(),
+      metadata: {
+        level,
+        reasons,
+        window_minutes: windowMinutes,
+        metrics,
+        trend,
+        config
+      }
+    };
+
+    const outbox = {
+      queued: false,
+      event_id: null,
+      status: this.hasOutboxSupport() ? 'not_queued' : 'not_supported',
+      error: null
+    };
+
+    if (this.hasOutboxSupport()) {
+      try {
+        outbox.event_id = await this.db.enqueueOutboundEvent({
+          eventType: 'delivery_alert.triggered',
+          userId: routeCfg.routeUserId || null,
+          channel: 'cron-event',
+          source: 'scheduler-alert',
+          payload: envelope
+        });
+        outbox.queued = true;
+        outbox.status = 'queued';
+      } catch (err) {
+        outbox.status = 'queue_failed';
+        outbox.error = err.message;
+      }
+    }
+
+    const maxRetries = Number.isInteger(routeCfg.routeRetryMax)
+      ? Math.max(0, routeCfg.routeRetryMax)
+      : 1;
+
+    let deliveryResult;
+    try {
+      deliveryResult = await this.delivery.deliverWithRetry(envelope, { maxRetries });
+    } catch (err) {
+      deliveryResult = {
+        delivered: false,
+        mode: this.delivery?.mode || 'unknown',
+        reason: err.message,
+        attempts: 1,
+        retried: false,
+        exhausted: false
+      };
+    }
+
+    if (outbox.event_id) {
+      try {
+        if (deliveryResult?.delivered) {
+          await this.db.markOutboundEventDispatched(outbox.event_id, {
+            delivery: deliveryResult,
+            alert: { level, reasons }
+          });
+          outbox.status = 'dispatched';
+        } else {
+          await this.db.markOutboundEventFailed(
+            outbox.event_id,
+            deliveryResult?.reason || 'delivery_alert_delivery_failed',
+            {
+              delivery: deliveryResult,
+              alert: { level, reasons }
+            }
+          );
+          outbox.status = 'failed';
+        }
+      } catch (err) {
+        outbox.status = 'failed';
+        outbox.error = outbox.error || err.message;
+      }
+    }
+
+    return {
+      dispatched: !!deliveryResult?.delivered,
+      envelope,
+      delivery: deliveryResult,
+      outbox
+    };
+  }
+
   async evaluateDeliveryAlert({ windowMinutes = 60, limit = 500, emitAudit = true } = {}) {
     if (!this.hasDeliveryMetricsSupport()) {
       return { ok: false, reason: 'delivery_alert_not_supported' };
@@ -173,6 +304,35 @@ class SchedulerRunner {
 
     await this.saveDeliveryAlertState(nextState);
 
+    let alertDelivery = null;
+    if (shouldNotify && cfg.routeEnabled) {
+      alertDelivery = await this.dispatchDeliveryAlert({
+        level,
+        reasons,
+        windowMinutes,
+        metrics: {
+          log: logMetrics,
+          outbox
+        },
+        trend: {
+          dead_letter_total: deadLetterTotal,
+          previous_dead_letter_total: Number(prevState.last_dead_letter_total || 0),
+          growth,
+          growth_streak: growthStreak
+        },
+        config: {
+          min_attempts: cfg.minAttempts,
+          warn_failure_rate: cfg.warnFailureRate,
+          critical_failure_rate: cfg.criticalFailureRate,
+          warn_dead_letter_recent: cfg.warnDeadLetterRecent,
+          critical_dead_letter_recent: cfg.criticalDeadLetterRecent,
+          warn_growth_streak: cfg.warnGrowthStreak,
+          critical_growth_streak: cfg.criticalGrowthStreak,
+          cooldown_minutes: cfg.cooldownMinutes
+        }
+      });
+    }
+
     if (emitAudit && shouldNotify && typeof this.db.logAgentAction === 'function') {
       try {
         await this.db.logAgentAction(
@@ -192,7 +352,8 @@ class SchedulerRunner {
             outbox_recent: outbox?.recent,
             outbox_total_dead_letter: deadLetterTotal,
             growth,
-            growth_streak: growthStreak
+            growth_streak: growthStreak,
+            alert_delivery: alertDelivery
           }
         );
       } catch (_e) {
@@ -205,6 +366,7 @@ class SchedulerRunner {
       level,
       should_notify: shouldNotify,
       reasons,
+      alert_delivery: alertDelivery,
       metrics: {
         log: logMetrics,
         outbox
@@ -223,7 +385,10 @@ class SchedulerRunner {
         critical_dead_letter_recent: cfg.criticalDeadLetterRecent,
         warn_growth_streak: cfg.warnGrowthStreak,
         critical_growth_streak: cfg.criticalGrowthStreak,
-        cooldown_minutes: cfg.cooldownMinutes
+        cooldown_minutes: cfg.cooldownMinutes,
+        route_enabled: cfg.routeEnabled,
+        route_retry_max: cfg.routeRetryMax,
+        route_user_id: cfg.routeUserId || null
       }
     };
   }

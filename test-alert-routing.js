@@ -20,6 +20,9 @@ async function run() {
   process.env.ALERT_ROUTING_MIN_LEVEL = 'warn';
   process.env.ALERT_ROUTING_RETRY_MAX = '0';
 
+  // force fallback path to AlertRouter (disable scheduler-native route)
+  process.env.DELIVERY_ALERT_ROUTE_ENABLED = 'false';
+
   process.env.DELIVERY_ALERT_STATE_KEY = stateKey;
   process.env.DELIVERY_ALERT_COOLDOWN_MINUTES = '0';
   process.env.DELIVERY_ALERT_MIN_ATTEMPTS = '1';

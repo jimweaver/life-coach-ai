@@ -195,12 +195,15 @@ Updated: 2026-02-27
    - `/health` now exposes dead-letter replay policy snapshot
    - Added test: `test-dead-letter-safety-policy.js`
 
-27. **Alert routing integration completed**
-   - Added `core/alert-router.js` to route delivery alerts into cron-event transport
-   - `GET /jobs/delivery/alerts` now includes `routed` delivery result when alert is actionable
-   - Routed alerts emit audit log (`alert-router` / `delivery_alert_routed`)
-   - Configurable controls: `ALERT_ROUTING_ENABLED`, `ALERT_ROUTING_MIN_LEVEL`, `ALERT_ROUTING_RETRY_MAX`
-   - Added integration test: `test-alert-routing.js`
+27. **Alert routing integration hardened (scheduler-native + fallback)**
+   - `evaluateDeliveryAlert` now includes native `alert_delivery` result with outbox + retry metadata
+   - `GET /jobs/delivery/alerts` now de-dupes routing:
+     - prefers scheduler-native routing when present
+     - falls back to `AlertRouter` when scheduler-native routing is disabled
+   - `/health` now exposes delivery alert route policy snapshot
+   - Coverage updated:
+     - `test-delivery-alerts.js` validates scheduler-native routing path
+     - `test-alert-routing.js` validates AlertRouter fallback path
 
 ---
 
