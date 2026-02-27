@@ -6,6 +6,7 @@ const DomainAgents = require('./domain-agents');
 const ConflictResolver = require('./conflict-resolver');
 const ModelRouter = require('./model-router');
 const DataCollector = require('./data-collector');
+const SkillLearning = require('./skill-learning');
 
 class OrchestratorEngine {
   constructor() {
@@ -195,6 +196,12 @@ class OrchestratorEngine {
           agentId: 'safety-guardian'
         });
 
+        await this.db.setSession(sessionId, {
+          user_id: userId,
+          current_intent: intent,
+          last_message_at: new Date().toISOString()
+        });
+
         return {
           session_id: sessionId,
           mode: 'emergency',
@@ -202,6 +209,39 @@ class OrchestratorEngine {
           elapsed_ms: Date.now() - start
         };
       }
+    }
+
+    // Skill creation detection short-circuit
+    const skillResult = SkillLearning.analyze(input);
+    if (skillResult && skillResult.detected) {
+      const response = SkillLearning.buildResponse(skillResult);
+      const output = response?.message || '我檢測到你想創建一個 skill，讓我幫你分析一下...';
+
+      await this.persistConversation({
+        userId,
+        sessionId,
+        userInput: input,
+        assistantOutput: output,
+        agentId: 'skill-learning'
+      });
+
+      await this.db.setSession(sessionId, {
+        user_id: userId,
+        current_intent: { primary_domain: 'skill_learning', domains: ['skill'], urgency: 1, confidence: 1 },
+        last_message_at: new Date().toISOString()
+      });
+
+      return {
+        session_id: sessionId,
+        mode: 'skill_learning',
+        output,
+        skill_learning: {
+          detected: true,
+          description: skillResult.description,
+          keywords: skillResult.keywords
+        },
+        elapsed_ms: Date.now() - start
+      };
     }
 
     const domainRun = await this.runDomains(intent.domains, input, context);

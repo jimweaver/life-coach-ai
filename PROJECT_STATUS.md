@@ -605,13 +605,25 @@ Updated: 2026-02-27
    - Added npm script: `test:skill-learning`
    - All tests pass (intent detection, description extraction, response building)
 
+66. **Skill-learning integrated into orchestrator message flow**
+   - Added SkillLearning import to `core/orchestrator-engine.js`
+   - Skill creation intent detected as short-circuit before domain processing
+   - Returns `mode: 'skill_learning'` with analysis report when detected
+   - Includes `skill_learning` metadata in response (description, keywords)
+   - Conversation persisted with `agentId: 'skill-learning'`
+   - Session metadata stored for skill learning interactions
+   - Also added session persistence for emergency short-circuit path (consistency)
+   - Added test: `test-orchestrator-skill-learning.js`
+   - Added npm script: `test:orchestrator-skill-learning`
+   - All tests pass (normal flow, English/Chinese detection, persistence)
+
 ---
 
 ## In progress / next
 
-1. Integrate skill-learning into orchestrator message flow
-2. Add managed smoke orchestration stress test coverage
-3. Continue production readiness hardening (connection draining metrics)
+1. Add managed smoke orchestration stress test coverage
+2. Continue production readiness hardening (connection draining metrics)
+3. Add skill-learning analytics endpoint
 
 ---
 
