@@ -39,6 +39,7 @@
     "test:deploy": "node test-deploy-wrapper.js",
     "test:deploy-observability": "node test-deploy-observability.js",
     "test:deploy-sink": "node test-deploy-event-sink.js",
+    "test:deploy-dashboard": "node test-deploy-event-dashboard.js",
     "test:deploy-analytics": "node test-deploy-event-analytics.js",
     "test:deploy-anomaly": "node test-deploy-trend-anomaly.js",
     "test:deploy-suppression": "node test-deploy-trend-suppression.js",

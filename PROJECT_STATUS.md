@@ -419,13 +419,32 @@ Updated: 2026-02-27
    - Added coverage: `test-deploy-trend-anomaly.js`
    - Deployment ops docs updated with anomaly API + env controls
 
+49. **Deploy trend suppression controls added (cooldown + duplicate paging guard)**
+   - `GET /jobs/deploy-events/anomalies` now supports route suppression via env controls:
+     - `DEPLOY_TREND_SUPPRESSION_ENABLED`
+     - `DEPLOY_TREND_COOLDOWN_MINUTES`
+     - `DEPLOY_TREND_DUPLICATE_WINDOW_MINUTES`
+     - `DEPLOY_TREND_STATE_KEY`
+   - Anomaly route now suppresses duplicate paging during cooldown/duplicate windows
+   - Emits audit signal: `deploy_trend_anomaly_route_suppressed`
+   - `/health` now exposes deploy trend suppression policy snapshot
+   - Added suppression observability endpoint: `GET /jobs/deploy-events/anomalies/suppression`
+   - Added coverage: `test-deploy-trend-suppression.js`
+   - Deployment ops docs updated with suppression controls
+
+50. **AlertRouter generic route() method added**
+   - Added `route()` method for flexible alert routing across different alert types
+   - Supports `kind`, `level`, `text`, `metadata`, and `options` (toUserId, channel, retryMax)
+   - Used by deploy trend anomaly routing + canary drift routing
+   - Emits audit log with `{kind}_routed` action type
+
 ---
 
 ## In progress / next
 
-1. Add deploy trend suppression controls (cooldown + duplicate anomaly paging guard)
-2. Add canary drift suppression observability endpoint (state + cooldown remaining)
-3. Add deploy trend suppression observability endpoint (state + cooldown remaining)
+1. Add canary drift suppression observability endpoint (state + cooldown remaining)
+2. Add deploy event dashboard test script to runbook
+3. Consolidate alert routing with generic `route()` method across all alert types
 
 ---
 
@@ -485,6 +504,8 @@ npm run test:deploy-sink
 npm run test:deploy-analytics
 npm run test:deploy-trend
 npm run test:deploy-anomaly
+npm run test:deploy-suppression
+npm run test:deploy-dashboard
 npm run test:deploy-smoke
 npm run test:deploy-canary
 npm run test:canary

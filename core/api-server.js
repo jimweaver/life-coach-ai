@@ -62,7 +62,12 @@ async function createServer() {
     routeMinLevel: String(process.env.DEPLOY_TREND_ROUTE_MIN_LEVEL || 'warn').toLowerCase(),
     routeUserId: process.env.DEPLOY_TREND_ROUTE_USER_ID || null,
     routeChannel: process.env.DEPLOY_TREND_ROUTE_CHANNEL || 'cron-event',
-    routeRetryMax: Number(process.env.DEPLOY_TREND_ROUTE_RETRY_MAX || 1)
+    routeRetryMax: Number(process.env.DEPLOY_TREND_ROUTE_RETRY_MAX || 1),
+    suppressionEnabled: String(process.env.DEPLOY_TREND_SUPPRESSION_ENABLED || 'true').toLowerCase() !== 'false',
+    suppressionCooldownMinutes: Number(process.env.DEPLOY_TREND_SUPPRESSION_COOLDOWN_MINUTES || 30),
+    suppressionDuplicateWindowMinutes: Number(process.env.DEPLOY_TREND_SUPPRESSION_DUPLICATE_WINDOW_MINUTES || 120),
+    suppressionStateKey: process.env.DEPLOY_TREND_SUPPRESSION_STATE_KEY || 'lifecoach:deploy-trend:suppression',
+    suppressionStateTtlSec: Number(process.env.DEPLOY_TREND_SUPPRESSION_STATE_TTL_SEC || 604800)
   };
 
   const ownershipDriftRoutingPolicy = {
@@ -92,6 +97,12 @@ async function createServer() {
   };
 
   let canaryDriftRouteStateMemory = {
+    last_routed_at_ms: 0,
+    last_signature: null,
+    last_level: 'info'
+  };
+
+  let deployTrendRouteStateMemory = {
     last_routed_at_ms: 0,
     last_signature: null,
     last_level: 'info'
@@ -552,6 +563,125 @@ async function createServer() {
     next();
   });
 
+  const buildDeployTrendRouteSignature = (anomaly) => {
+    const level = String(anomaly?.level || 'info').toLowerCase();
+    const reasons = Array.isArray(anomaly?.reasons)
+      ? [...new Set(anomaly.reasons.map((x) => String(x || '').trim()).filter(Boolean))].sort()
+      : [];
+
+    return JSON.stringify({ level, reasons });
+  };
+
+  const loadDeployTrendRouteState = async () => {
+    if (!deployTrendRoutingPolicy.suppressionEnabled) {
+      return {
+        ...deployTrendRouteStateMemory,
+        source: 'disabled'
+      };
+    }
+
+    if (!db.redis || !deployTrendRoutingPolicy.suppressionStateKey) {
+      return {
+        ...deployTrendRouteStateMemory,
+        source: 'memory'
+      };
+    }
+
+    try {
+      const raw = await db.redis.get(deployTrendRoutingPolicy.suppressionStateKey);
+      if (!raw) {
+        return {
+          ...deployTrendRouteStateMemory,
+          source: 'redis'
+        };
+      }
+
+      const parsed = JSON.parse(raw);
+      return {
+        last_routed_at_ms: Number(parsed.last_routed_at_ms || 0),
+        last_signature: parsed.last_signature || null,
+        last_level: parsed.last_level || 'info',
+        source: 'redis'
+      };
+    } catch (_e) {
+      return {
+        ...deployTrendRouteStateMemory,
+        source: 'memory-fallback'
+      };
+    }
+  };
+
+  const saveDeployTrendRouteState = async (state) => {
+    deployTrendRouteStateMemory = {
+      last_routed_at_ms: Number(state.last_routed_at_ms || 0),
+      last_signature: state.last_signature || null,
+      last_level: state.last_level || 'info'
+    };
+
+    if (!deployTrendRoutingPolicy.suppressionEnabled) return;
+    if (!db.redis || !deployTrendRoutingPolicy.suppressionStateKey) return;
+
+    try {
+      await db.redis.setex(
+        deployTrendRoutingPolicy.suppressionStateKey,
+        Math.max(60, deployTrendRoutingPolicy.suppressionStateTtlSec),
+        JSON.stringify(deployTrendRouteStateMemory)
+      );
+    } catch (_e) {
+      // best effort only
+    }
+  };
+
+  const evaluateDeployTrendSuppression = async (anomaly) => {
+    if (!deployTrendRoutingPolicy.suppressionEnabled) {
+      return {
+        enabled: false,
+        suppressed: false,
+        reason: 'suppression_disabled',
+        remaining_ms: 0,
+        duplicate_match: false,
+        state: { ...deployTrendRouteStateMemory }
+      };
+    }
+
+    const now = Date.now();
+    const state = await loadDeployTrendRouteState();
+
+    const cooldownMs = Math.max(0, deployTrendRoutingPolicy.suppressionCooldownMinutes) * 60_000;
+    const duplicateWindowMs = Math.max(0, deployTrendRoutingPolicy.suppressionDuplicateWindowMinutes) * 60_000;
+
+    const elapsedMs = Math.max(0, now - Number(state.last_routed_at_ms || 0));
+    const currentSignature = buildDeployTrendRouteSignature(anomaly);
+    const duplicateMatch = !!state.last_signature && state.last_signature === currentSignature;
+
+    const inCooldown = Number(state.last_routed_at_ms || 0) > 0 && elapsedMs < cooldownMs;
+    const inDuplicateWindow = duplicateMatch && Number(state.last_routed_at_ms || 0) > 0 && elapsedMs < duplicateWindowMs;
+
+    let suppressed = false;
+    let reason = 'allowed';
+    let remainingMs = 0;
+
+    if (inDuplicateWindow) {
+      suppressed = true;
+      reason = 'duplicate_window';
+      remainingMs = Math.max(0, duplicateWindowMs - elapsedMs);
+    } else if (inCooldown) {
+      suppressed = true;
+      reason = 'cooldown';
+      remainingMs = Math.max(0, cooldownMs - elapsedMs);
+    }
+
+    return {
+      enabled: true,
+      suppressed,
+      reason,
+      remaining_ms: remainingMs,
+      duplicate_match: duplicateMatch,
+      current_signature: currentSignature,
+      state
+    };
+  };
+
   app.get('/health', async (_req, res) => {
     const status = await db.testConnections();
     res.json({
@@ -621,6 +751,10 @@ async function createServer() {
         route_user_id_configured: !!deployTrendRoutingPolicy.routeUserId,
         route_channel: deployTrendRoutingPolicy.routeChannel,
         route_retry_max: deployTrendRoutingPolicy.routeRetryMax,
+        suppression_enabled: deployTrendRoutingPolicy.suppressionEnabled,
+        suppression_cooldown_minutes: deployTrendRoutingPolicy.suppressionCooldownMinutes,
+        suppression_duplicate_window_minutes: deployTrendRoutingPolicy.suppressionDuplicateWindowMinutes,
+        suppression_state_key_configured: !!deployTrendRoutingPolicy.suppressionStateKey,
         warn_error_rate: deployTrendAnomalyDetector.warnErrorRate,
         critical_error_rate: deployTrendAnomalyDetector.criticalErrorRate,
         warn_abort_ratio: deployTrendAnomalyDetector.warnAbortRatio,
@@ -1400,8 +1534,10 @@ async function createServer() {
       const routeMinLevel = String(req.query.routeMinLevel || deployTrendRoutingPolicy.routeMinLevel).toLowerCase();
       const routeRank = deployTrendLevelRank[routeMinLevel] || deployTrendLevelRank.warn;
       const shouldRoute = route && anomaly.anomaly_detected && (deployTrendLevelRank[anomaly.level] || 0) >= routeRank;
+      const suppression = await evaluateDeployTrendSuppression(anomaly);
+      const routeSuppressed = shouldRoute && suppression.enabled && suppression.suppressed;
 
-      if (shouldRoute) {
+      if (shouldRoute && !routeSuppressed) {
         const targetUserId = req.query.routeUserId
           ? String(req.query.routeUserId)
           : deployTrendRoutingPolicy.routeUserId;
@@ -1444,6 +1580,7 @@ async function createServer() {
                 bucketMinutes
               },
               anomaly,
+              suppression,
               policy: {
                 route_min_level: routeMinLevel,
                 route_retry_max: deployTrendRoutingPolicy.routeRetryMax
@@ -1455,6 +1592,49 @@ async function createServer() {
               retryMax: deployTrendRoutingPolicy.routeRetryMax
             }
           });
+
+          const routeAttempted = !!routed;
+          if (routeAttempted) {
+            await saveDeployTrendRouteState({
+              last_routed_at_ms: Date.now(),
+              last_signature: suppression.current_signature || buildDeployTrendRouteSignature(anomaly),
+              last_level: anomaly.level || 'info'
+            });
+          }
+        }
+      } else if (routeSuppressed) {
+        routed = {
+          attempted: false,
+          routed: false,
+          reason: 'suppressed',
+          suppression
+        };
+
+        if (emitAudit && anomaly.anomaly_detected) {
+          try {
+            await db.logAgentAction(
+              'deploy-trend',
+              null,
+              null,
+              'deploy_trend_anomaly_route_suppressed',
+              null,
+              'success',
+              null,
+              {
+                level: anomaly.level,
+                reasons: anomaly.reasons,
+                suppression,
+                filters: {
+                  runId,
+                  source,
+                  sinceMinutes,
+                  bucketMinutes
+                }
+              }
+            );
+          } catch (_e) {
+            // best effort only
+          }
         }
       }
 
@@ -1472,10 +1652,188 @@ async function createServer() {
         route: {
           requested: !!route,
           min_level: routeMinLevel,
-          should_route: !!shouldRoute
+          should_route: !!shouldRoute,
+          suppressed: !!routeSuppressed
         },
+        suppression,
         anomaly,
         routed
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/deploy-events/anomalies/suppression', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 15);
+      const runLimit = Number(req.query.runLimit || 100);
+      const timelineLimit = Number(req.query.timelineLimit || 2000);
+      const heatmapLimit = Number(req.query.heatmapLimit || 500);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 500) {
+        return badRequest(res, ['runLimit must be an integer between 1 and 500']);
+      }
+
+      if (!Number.isInteger(timelineLimit) || timelineLimit < 1 || timelineLimit > 10000) {
+        return badRequest(res, ['timelineLimit must be an integer between 1 and 10000']);
+      }
+
+      if (!Number.isInteger(heatmapLimit) || heatmapLimit < 1 || heatmapLimit > 2000) {
+        return badRequest(res, ['heatmapLimit must be an integer between 1 and 2000']);
+      }
+
+      const [runs, timeline, heatmapRows] = await Promise.all([
+        db.summarizeDeployRuns({
+          sinceMinutes,
+          runId,
+          source,
+          limit: runLimit
+        }),
+        db.getDeployEventTimeline({
+          sinceMinutes,
+          bucketMinutes,
+          runId,
+          source,
+          limit: timelineLimit
+        }),
+        db.getDeployEventHeatmap({
+          sinceMinutes,
+          runId,
+          source,
+          limit: heatmapLimit
+        })
+      ]);
+
+      const anomaly = deployTrendAnomalyDetector.evaluate({ runs, timeline, heatmapRows });
+      const suppression = await evaluateDeployTrendSuppression(anomaly);
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          runLimit,
+          timelineLimit,
+          heatmapLimit
+        },
+        suppression,
+        anomaly: {
+          level: anomaly.level,
+          anomaly_detected: anomaly.anomaly_detected,
+          anomaly_count: anomaly.anomaly_count,
+          reasons: anomaly.reasons
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/jobs/deploy-events/dashboard', async (req, res) => {
+    try {
+      const runId = req.query.runId ? String(req.query.runId).trim() : null;
+      const source = req.query.source ? String(req.query.source).trim() : null;
+      const sinceMinutes = Number(req.query.sinceMinutes || 240);
+      const bucketMinutes = Number(req.query.bucketMinutes || 30);
+      const runLimit = Number(req.query.runLimit || 20);
+      const timelineLimit = Number(req.query.timelineLimit || 1000);
+      const heatmapLimit = Number(req.query.heatmapLimit || 500);
+
+      if (runId && !isUuid(runId)) {
+        return badRequest(res, ['runId must be a valid UUID']);
+      }
+
+      if (source && !/^[a-z0-9_.:-]{2,80}$/i.test(source)) {
+        return badRequest(res, ['source must be a valid source token']);
+      }
+
+      if (!Number.isInteger(sinceMinutes) || sinceMinutes < 1 || sinceMinutes > 10080) {
+        return badRequest(res, ['sinceMinutes must be an integer between 1 and 10080']);
+      }
+
+      if (!Number.isInteger(bucketMinutes) || bucketMinutes < 1 || bucketMinutes > 1440) {
+        return badRequest(res, ['bucketMinutes must be an integer between 1 and 1440']);
+      }
+
+      if (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 500) {
+        return badRequest(res, ['runLimit must be an integer between 1 and 500']);
+      }
+
+      if (!Number.isInteger(timelineLimit) || timelineLimit < 1 || timelineLimit > 10000) {
+        return badRequest(res, ['timelineLimit must be an integer between 1 and 10000']);
+      }
+
+      if (!Number.isInteger(heatmapLimit) || heatmapLimit < 1 || heatmapLimit > 2000) {
+        return badRequest(res, ['heatmapLimit must be an integer between 1 and 2000']);
+      }
+
+      const [timeline, heatmapRows, summary] = await Promise.all([
+        db.getDeployEventTimeline({
+          sinceMinutes,
+          bucketMinutes,
+          runId,
+          source,
+          limit: timelineLimit
+        }),
+        db.getDeployEventHeatmap({
+          sinceMinutes,
+          runId,
+          source,
+          limit: heatmapLimit
+        }),
+        db.summarizeDeployRunEvents({
+          sinceMinutes,
+          runId
+        })
+      ]);
+
+      const heatmapTotals = heatmapRows.reduce((acc, row) => {
+        acc.total += Number(row.total_count || 0);
+        acc.error += Number(row.error_count || 0);
+        acc.warn += Number(row.warn_count || 0);
+        return acc;
+      }, { total: 0, error: 0, warn: 0 });
+
+      res.json({
+        ok: true,
+        filters: {
+          runId,
+          source,
+          sinceMinutes,
+          bucketMinutes,
+          runLimit,
+          timelineLimit,
+          heatmapLimit
+        },
+        timeline,
+        heatmap: {
+          rows: heatmapRows,
+          totals: heatmapTotals,
+          peak_event: heatmapRows[0]?.event || null
+        },
+        summary
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

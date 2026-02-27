@@ -100,6 +100,115 @@ class AlertRouter {
     };
   }
 
+  async route(alert) {
+    const kind = String(alert?.kind || 'generic_alert');
+    const level = String(alert?.level || 'info').toLowerCase();
+    const text = alert?.text || '';
+    const metadata = alert?.metadata || {};
+    const options = alert?.options || {};
+
+    const targetUserId = options.toUserId || this.userId;
+    const targetChannel = options.channel || this.channel;
+    const maxRetries = Number(options.retryMax ?? process.env.ALERT_ROUTING_RETRY_MAX ?? 1);
+
+    if (!this.enabled) {
+      return {
+        attempted: false,
+        routed: false,
+        reason: 'routing_disabled'
+      };
+    }
+
+    if (!targetUserId) {
+      return {
+        attempted: false,
+        routed: false,
+        reason: 'no_target_user'
+      };
+    }
+
+    const envelope = this.delivery?.buildEnvelope
+      ? this.delivery.buildEnvelope({
+        userId: targetUserId,
+        cycle: kind,
+        message: text,
+        severity: level,
+        metadata: {
+          event_type: kind,
+          route_channel: targetChannel,
+          ...metadata
+        }
+      })
+      : {
+        kind: 'systemEvent',
+        text,
+        source: 'life-coach-alert-router',
+        event_type: kind,
+        severity: level,
+        user_id: targetUserId,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          route_channel: targetChannel,
+          ...metadata
+        }
+      };
+
+    let delivery = null;
+    if (this.delivery && typeof this.delivery.deliverWithRetry === 'function') {
+      try {
+        delivery = await this.delivery.deliverWithRetry(envelope, { maxRetries });
+      } catch (err) {
+        delivery = {
+          delivered: false,
+          mode: this.delivery?.mode || 'unknown',
+          reason: err.message
+        };
+      }
+    } else {
+      delivery = {
+        delivered: false,
+        mode: this.delivery?.mode || 'none',
+        reason: 'delivery_unavailable'
+      };
+    }
+
+    if (this.db?.logAgentAction) {
+      try {
+        await this.db.logAgentAction(
+          'alert-router',
+          null,
+          null,
+          `${kind}_routed`,
+          null,
+          delivery?.delivered ? 'success' : 'failure',
+          null,
+          {
+            kind,
+            level,
+            target_user_id: targetUserId,
+            target_channel: targetChannel,
+            envelope,
+            delivery,
+            metadata
+          }
+        );
+      } catch (_e) {
+        // best effort
+      }
+    }
+
+    return {
+      attempted: true,
+      routed: !!delivery?.delivered,
+      kind,
+      level,
+      target_user_id: targetUserId,
+      target_channel: targetChannel,
+      envelope,
+      delivery
+    };
+  }
+
   async routeDeliveryAlert(alert) {
     const level = String(alert?.level || 'info').toLowerCase();
     if (!this.shouldRoute(level) || !alert?.should_notify) {
