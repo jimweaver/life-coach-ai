@@ -1542,6 +1542,23 @@ async function createServer() {
     }
   });
 
+  // Webhook delivery success rate metrics endpoint
+  app.get('/metrics/delivery', (_req, res) => {
+    try {
+      const metrics = cronDelivery.getDeliveryMetrics();
+      res.json({
+        ok: true,
+        ...metrics
+      });
+    } catch (err) {
+      console.error('[Delivery Metrics] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+  });
+
   // Database query performance metrics endpoint
   app.get('/metrics/queries', (_req, res) => {
     try {
@@ -1582,6 +1599,9 @@ async function createServer() {
         (sum, stats) => sum + stats.totalBytes, 0
       );
 
+      // Get delivery metrics
+      const deliveryMetrics = cronDelivery.getDeliveryMetrics();
+
       res.json({
         ok: true,
         summary: {
@@ -1601,6 +1621,11 @@ async function createServer() {
             hit_rate: cacheMetrics.hit_rate,
             total_ops: cacheMetrics.total_operations,
             top_pattern: cacheMetrics.key_patterns[0]?.pattern || 'none'
+          },
+          delivery_stats: {
+            total_deliveries: deliveryMetrics.total_deliveries,
+            success_rate: deliveryMetrics.success_rate,
+            avg_response_ms: deliveryMetrics.response_time_ms.avg
           }
         },
         services: {
@@ -1608,6 +1633,7 @@ async function createServer() {
           pools: poolMetrics,
           queries: queryMetrics,
           cache: cacheMetrics,
+          delivery: deliveryMetrics,
           latency: {
             histogram: latencyHistogram,
             total_requests: totalRequests

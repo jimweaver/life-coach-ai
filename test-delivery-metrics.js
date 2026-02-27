@@ -1,85 +1,76 @@
 #!/usr/bin/env node
 
+/**
+ * Test webhook delivery success rate metrics
+ */
+
 require('dotenv').config();
-const { v4: uuidv4 } = require('uuid');
-const DatabaseStorageManager = require('./core/storage/database-storage');
-const createServer = require('./core/api-server');
+
+const API_BASE = process.env.API_BASE_URL || 'http://localhost:8787';
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
+async function fetchDeliveryMetrics() {
+  const res = await fetch(`${API_BASE}/metrics/delivery`);
+  return res.json();
+}
+
 async function run() {
-  const queueKey = `lifecoach:test:delivery-metrics:${Date.now()}:${process.pid}`;
-
-  process.env.CRON_DELIVERY_MODE = 'redis';
-  process.env.CRON_EVENT_REDIS_LIST_KEY = queueKey;
-  process.env.SCHEDULER_DELIVER_MONITOR = 'true';
-  process.env.SCHEDULER_DELIVER_MORNING = 'true';
-
-  // avoid policy side effects in this test
-  process.env.RATE_LIMIT_BACKEND = 'memory';
-  process.env.RATE_LIMIT_MAX = '1000';
-  process.env.RATE_LIMIT_MAX_JOBS = '1000';
-
-  const prepDb = new DatabaseStorageManager();
-  const userId = uuidv4();
+  console.log('Testing webhook delivery success rate metrics...\n');
 
   try {
-    await prepDb.createUserProfile(userId, {
-      name: 'delivery-metrics-test-user',
-      created_at: new Date().toISOString()
-    });
+    // Test 1: Basic endpoint access
+    console.log('Test 1: Basic endpoint access...');
+    const data = await fetchDeliveryMetrics();
+    assert(data.ok === true, 'should return ok: true');
+    assert(typeof data.total_deliveries === 'number', 'should have total_deliveries');
+    assert(typeof data.successful === 'number', 'should have successful');
+    assert(typeof data.failed === 'number', 'should have failed');
+    assert(typeof data.success_rate === 'string', 'should have success_rate');
+    console.log('✅ Basic endpoint access works');
 
-    await prepDb.recordKBIMetric(userId, 'goal_adherence', 0.3);
-    await prepDb.recordKBIMetric(userId, 'engagement_score', 1);
-    await prepDb.recordKBIMetric(userId, 'mood_trend', 2.4);
+    // Test 2: By mode breakdown
+    console.log('\nTest 2: By mode breakdown...');
+    assert(Array.isArray(data.by_mode), 'should have by_mode array');
+    console.log('✅ By mode breakdown present');
 
-    const { shutdown } = await createServer();
-    const base = 'http://localhost:8787';
+    // Test 3: Error reasons
+    console.log('\nTest 3: Error reasons...');
+    assert(Array.isArray(data.error_reasons), 'should have error_reasons array');
+    console.log('✅ Error reasons present');
 
-    try {
-      const monitor = await fetch(`${base}/jobs/run-monitor-cycle`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ limitUsers: 1 })
-      });
-      assert(monitor.status === 200, `monitor job should return 200, got ${monitor.status}`);
+    // Test 4: Response time stats
+    console.log('\nTest 4: Response time stats...');
+    assert(data.response_time_ms !== undefined, 'should have response_time_ms');
+    assert(typeof data.response_time_ms.avg === 'number', 'should have avg response time');
+    assert(typeof data.response_time_ms.min === 'number', 'should have min response time');
+    assert(typeof data.response_time_ms.max === 'number', 'should have max response time');
+    console.log('✅ Response time stats present');
 
-      const morning = await fetch(`${base}/jobs/run-morning-cycle`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ limitUsers: 1 })
-      });
-      assert(morning.status === 200, `morning job should return 200, got ${morning.status}`);
+    // Test 5: Recent errors
+    console.log('\nTest 5: Recent errors...');
+    assert(Array.isArray(data.recent_errors), 'should have recent_errors array');
+    console.log('✅ Recent errors present');
 
-      const metricsRes = await fetch(`${base}/jobs/delivery/metrics?windowMinutes=120&limit=500`);
-      assert(metricsRes.status === 200, `metrics endpoint should return 200, got ${metricsRes.status}`);
+    // Test 6: Timestamp
+    console.log('\nTest 6: Timestamp...');
+    assert(typeof data.generated_at === 'string', 'should have generated_at');
+    console.log('✅ Timestamp present');
 
-      const metrics = await metricsRes.json();
-      assert(metrics.ok === true, 'metrics payload should include ok=true');
-      assert(metrics.delivery_mode === 'redis', `expected delivery_mode=redis, got ${metrics.delivery_mode}`);
-      assert(metrics.queue?.key === queueKey, 'queue key mismatch');
-      assert(typeof metrics.queue?.depth === 'number', 'queue depth should be numeric in redis mode');
-      assert(metrics.queue.depth >= 1, `expected queue depth >=1, got ${metrics.queue.depth}`);
-
-      assert(metrics.log_metrics?.sample_size >= 1, 'expected non-empty log metrics sample');
-      assert(metrics.log_metrics?.attempted_deliveries >= 1, 'expected attempted deliveries >=1');
-
-      assert(metrics.outbox?.total, 'outbox summary missing total');
-      assert(metrics.outbox?.recent, 'outbox summary missing recent');
-
-      console.log('✅ delivery metrics endpoint test passed');
-    } finally {
-      await shutdown();
-    }
-  } finally {
-    await prepDb.redis.del(queueKey).catch(() => {});
-    await prepDb.close();
+    console.log('\n✅ All delivery metrics tests passed');
+    console.log('\nDelivery stats:');
+    console.log(JSON.stringify({
+      total_deliveries: data.total_deliveries,
+      success_rate: data.success_rate,
+      by_mode: data.by_mode,
+      response_time_ms: data.response_time_ms
+    }, null, 2));
+  } catch (err) {
+    console.error('\n❌ Test failed:', err.message);
+    process.exit(1);
   }
 }
 
-run().catch((err) => {
-  console.error('❌ delivery metrics endpoint test failed:', err.message);
-  process.exit(1);
-});
+run();

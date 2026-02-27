@@ -12,6 +12,109 @@ class CronEventDelivery {
     this.retryBaseDelayMs = Number(options.retryBaseDelayMs ?? process.env.CRON_DELIVERY_RETRY_BASE_DELAY_MS ?? 1000);
     this.retryMaxDelayMs = Number(options.retryMaxDelayMs ?? process.env.CRON_DELIVERY_RETRY_MAX_DELAY_MS ?? 60000);
     this.retryJitter = options.retryJitter !== false;
+
+    // Delivery statistics tracking
+    this.deliveryStats = {
+      total: 0,
+      successful: 0,
+      failed: 0,
+      byMode: {
+        redis: { total: 0, successful: 0, failed: 0 },
+        webhook: { total: 0, successful: 0, failed: 0 },
+        none: { total: 0, successful: 0, failed: 0 }
+      },
+      errorReasons: {},
+      responseTimeMs: {
+        total: 0,
+        count: 0,
+        min: null,
+        max: null
+      },
+      recentErrors: [] // Last 50 errors
+    };
+  }
+
+  /**
+   * Record delivery attempt in statistics
+   */
+  recordDelivery(mode, success, responseTimeMs, reason = null) {
+    this.deliveryStats.total++;
+    this.deliveryStats.byMode[mode] = this.deliveryStats.byMode[mode] || { total: 0, successful: 0, failed: 0 };
+    this.deliveryStats.byMode[mode].total++;
+
+    if (success) {
+      this.deliveryStats.successful++;
+      this.deliveryStats.byMode[mode].successful++;
+    } else {
+      this.deliveryStats.failed++;
+      this.deliveryStats.byMode[mode].failed++;
+
+      // Track error reason
+      if (reason) {
+        this.deliveryStats.errorReasons[reason] = (this.deliveryStats.errorReasons[reason] || 0) + 1;
+      }
+
+      // Add to recent errors
+      this.deliveryStats.recentErrors.push({
+        mode,
+        reason: reason || 'unknown',
+        timestamp: new Date().toISOString()
+      });
+      // Keep only last 50
+      if (this.deliveryStats.recentErrors.length > 50) {
+        this.deliveryStats.recentErrors.shift();
+      }
+    }
+
+    // Track response time
+    if (responseTimeMs !== null) {
+      this.deliveryStats.responseTimeMs.total += responseTimeMs;
+      this.deliveryStats.responseTimeMs.count++;
+      if (this.deliveryStats.responseTimeMs.min === null || responseTimeMs < this.deliveryStats.responseTimeMs.min) {
+        this.deliveryStats.responseTimeMs.min = responseTimeMs;
+      }
+      if (this.deliveryStats.responseTimeMs.max === null || responseTimeMs > this.deliveryStats.responseTimeMs.max) {
+        this.deliveryStats.responseTimeMs.max = responseTimeMs;
+      }
+    }
+  }
+
+  /**
+   * Get delivery statistics
+   */
+  getDeliveryMetrics() {
+    const avgResponseTime = this.deliveryStats.responseTimeMs.count > 0
+      ? Math.round(this.deliveryStats.responseTimeMs.total / this.deliveryStats.responseTimeMs.count)
+      : 0;
+
+    return {
+      total_deliveries: this.deliveryStats.total,
+      successful: this.deliveryStats.successful,
+      failed: this.deliveryStats.failed,
+      success_rate: this.deliveryStats.total > 0
+        ? ((this.deliveryStats.successful / this.deliveryStats.total) * 100).toFixed(2) + '%'
+        : '0%',
+      by_mode: Object.entries(this.deliveryStats.byMode).map(([mode, stats]) => ({
+        mode,
+        total: stats.total,
+        successful: stats.successful,
+        failed: stats.failed,
+        success_rate: stats.total > 0
+          ? ((stats.successful / stats.total) * 100).toFixed(2) + '%'
+          : '0%'
+      })).filter(m => m.total > 0).sort((a, b) => b.total - a.total),
+      error_reasons: Object.entries(this.deliveryStats.errorReasons)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10),
+      response_time_ms: {
+        avg: avgResponseTime,
+        min: this.deliveryStats.responseTimeMs.min ?? 0,
+        max: this.deliveryStats.responseTimeMs.max ?? 0
+      },
+      recent_errors: this.deliveryStats.recentErrors.slice(-5),
+      generated_at: new Date().toISOString()
+    };
   }
 
   /**
@@ -93,29 +196,48 @@ class CronEventDelivery {
   }
 
   async deliver(envelope) {
+    const startTime = Date.now();
+    let result;
+
     if (this.mode === 'none') {
-      return { delivered: false, mode: 'none', reason: 'delivery disabled' };
+      result = { delivered: false, mode: 'none', reason: 'delivery disabled' };
+      this.recordDelivery('none', false, Date.now() - startTime, 'delivery_disabled');
+      return result;
     }
 
     if (this.mode === 'redis') {
       if (!this.redis) {
-        return { delivered: false, mode: 'redis', reason: 'redis unavailable' };
+        result = { delivered: false, mode: 'redis', reason: 'redis unavailable' };
+        this.recordDelivery('redis', false, Date.now() - startTime, 'redis_unavailable');
+        return result;
       }
 
-      await this.redis.rpush(this.redisListKey, JSON.stringify(envelope));
-      return {
-        delivered: true,
-        mode: 'redis',
-        target: this.redisListKey
-      };
+      try {
+        await this.redis.rpush(this.redisListKey, JSON.stringify(envelope));
+        result = {
+          delivered: true,
+          mode: 'redis',
+          target: this.redisListKey
+        };
+        this.recordDelivery('redis', true, Date.now() - startTime);
+        return result;
+      } catch (err) {
+        result = { delivered: false, mode: 'redis', reason: err.message };
+        this.recordDelivery('redis', false, Date.now() - startTime, err.message);
+        return result;
+      }
     }
 
     if (this.mode === 'webhook') {
       if (!this.webhookUrl) {
-        return { delivered: false, mode: 'webhook', reason: 'webhook url missing' };
+        result = { delivered: false, mode: 'webhook', reason: 'webhook url missing' };
+        this.recordDelivery('webhook', false, 0, 'webhook_url_missing');
+        return result;
       }
       if (!this.fetchImpl) {
-        return { delivered: false, mode: 'webhook', reason: 'fetch unavailable' };
+        result = { delivered: false, mode: 'webhook', reason: 'fetch unavailable' };
+        this.recordDelivery('webhook', false, 0, 'fetch_unavailable');
+        return result;
       }
 
       const controller = new AbortController();
@@ -132,25 +254,39 @@ class CronEventDelivery {
         });
 
         if (!res.ok) {
-          return {
+          result = {
             delivered: false,
             mode: 'webhook',
             reason: `http_${res.status}`
           };
+          this.recordDelivery('webhook', false, Date.now() - startTime, `http_${res.status}`);
+          return result;
         }
 
-        return {
+        result = {
           delivered: true,
           mode: 'webhook',
           target: this.webhookUrl,
           status: res.status
         };
+        this.recordDelivery('webhook', true, Date.now() - startTime);
+        return result;
+      } catch (err) {
+        result = {
+          delivered: false,
+          mode: 'webhook',
+          reason: err.name === 'AbortError' ? 'timeout' : err.message
+        };
+        this.recordDelivery('webhook', false, Date.now() - startTime, result.reason);
+        return result;
       } finally {
         clearTimeout(timer);
       }
     }
 
-    return { delivered: false, mode: this.mode, reason: 'unsupported_mode' };
+    result = { delivered: false, mode: this.mode, reason: 'unsupported_mode' };
+    this.recordDelivery(this.mode, false, Date.now() - startTime, 'unsupported_mode');
+    return result;
   }
 
   async deliverBatch(envelopes = []) {

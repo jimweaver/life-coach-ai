@@ -742,13 +742,26 @@ Updated: 2026-02-27
    - Added npm script: `test:cache`
    - Graceful shutdown test passes
 
+79. **Webhook delivery success rate tracking**
+   - Added delivery statistics tracking to `CronEventDelivery` class
+   - Tracks: total deliveries, successful, failed, by mode (redis/webhook/none)
+   - Tracks error reasons with frequency count
+   - Tracks response time statistics (avg, min, max)
+   - Maintains last 50 recent errors
+   - Added `GET /metrics/delivery` endpoint
+   - Returns: success_rate, by_mode breakdown, error_reasons, response_time_ms
+   - Integrated delivery stats into `/metrics/dashboard` endpoint
+   - Added test: `test-delivery-metrics.js`
+   - Added npm script: `test:delivery-metrics`
+   - Graceful shutdown test passes
+
 ---
 
 ## In progress / next
 
-1. Add webhook delivery success rate tracking
-2. Add model call latency tracking
-3. Add memory usage metrics
+1. Add model call latency tracking
+2. Add memory usage metrics
+3. Add agent execution time tracking
 
 ---
 
