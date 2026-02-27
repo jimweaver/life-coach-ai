@@ -627,13 +627,22 @@ Updated: 2026-02-27
    - Added npm script: `test:smoke-stress`
    - Configurable via env vars: STRESS_CONCURRENT_RUNS, STRESS_SMOKE_DEPTH, STRESS_TIMEOUT_MS
 
+68. **Connection draining metrics added to shutdown flow**
+   - Enhanced socket tracking in API server with connection metadata
+   - Track connection ID, connect time, remote address/port, duration
+   - `closeServerGracefully()` returns draining metrics (initial/remaining/closed sockets, duration)
+   - `api.shutdown.start` event includes `active_connections` and `total_connections_tracked`
+   - `api.shutdown.end` event includes `connection_draining` object with full metrics
+   - Automatic cleanup of old connection entries when map exceeds 10,000 entries
+   - Graceful shutdown test passes with new metrics
+
 ---
 
 ## In progress / next
 
-1. Continue production readiness hardening (connection draining metrics)
-2. Add skill-learning analytics endpoint
-3. Add connection pool monitoring
+1. Add skill-learning analytics endpoint
+2. Add connection pool monitoring
+3. Add health check endpoint extensions for deep checks
 
 ---
 

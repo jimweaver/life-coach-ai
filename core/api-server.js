@@ -4042,22 +4042,54 @@ async function createServer() {
   });
 
   const sockets = new Set();
+  const connections = new Map(); // Track connection metrics
+  let connectionId = 0;
+
   server.on('connection', (socket) => {
+    const id = ++connectionId;
+    const connInfo = {
+      id,
+      connectedAt: Date.now(),
+      remoteAddress: socket.remoteAddress,
+      remotePort: socket.remotePort
+    };
+    connections.set(id, connInfo);
     sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
+    
+    socket.on('close', () => {
+      sockets.delete(socket);
+      connInfo.closedAt = Date.now();
+      connInfo.duration = connInfo.closedAt - connInfo.connectedAt;
+      // Keep in connections map for metrics, cleanup old ones periodically
+      if (connections.size > 10000) {
+        // Cleanup old entries if map gets too large
+        const cutoff = Date.now() - 3600000; // 1 hour
+        for (const [key, value] of connections) {
+          if (value.closedAt && value.closedAt < cutoff) {
+            connections.delete(key);
+          }
+        }
+      }
+    });
   });
 
   const forceCloseSockets = () => {
+    let closed = 0;
     for (const socket of sockets) {
       try {
         socket.destroy();
+        closed++;
       } catch (_e) {
         // best effort
       }
     }
+    return closed;
   };
 
   const closeServerGracefully = async () => {
+    const startClose = Date.now();
+    const initialSocketCount = sockets.size;
+    
     await new Promise((resolve) => {
       let resolved = false;
 
@@ -4069,10 +4101,17 @@ async function createServer() {
 
       server.close(done);
       setTimeout(() => {
-        forceCloseSockets();
+        const forced = forceCloseSockets();
         done();
       }, gracefulShutdownMs);
     });
+    
+    return {
+      initialSocketCount,
+      remainingSockets: sockets.size,
+      closedSockets: initialSocketCount - sockets.size,
+      duration: Date.now() - startClose
+    };
   };
 
   const shutdown = async ({ exit = false, reason = 'signal' } = {}) => {
@@ -4081,6 +4120,10 @@ async function createServer() {
         const shutdownStart = Date.now();
         isShuttingDown = true;
 
+        // Capture pre-shutdown metrics
+        const totalConnections = connections.size;
+        const activeSockets = sockets.size;
+
         // Log shutdown start event
         if (shutdownEventSink) {
           await shutdownEventSink.write({
@@ -4088,12 +4131,14 @@ async function createServer() {
             level: 'info',
             reason,
             active_requests: activeRequests,
+            active_connections: activeSockets,
+            total_connections_tracked: totalConnections,
             grace_ms: gracefulShutdownMs,
             ts: new Date().toISOString()
           }).catch(() => {});
         }
 
-        await closeServerGracefully();
+        const gracefulResult = await closeServerGracefully();
         const gracefulDuration = Date.now() - shutdownStart;
 
         await Promise.allSettled([
@@ -4103,7 +4148,7 @@ async function createServer() {
 
         const totalDuration = Date.now() - shutdownStart;
 
-        // Log shutdown complete event
+        // Log shutdown complete event with draining metrics
         if (shutdownEventSink) {
           await shutdownEventSink.write({
             event: 'api.shutdown.end',
@@ -4111,6 +4156,12 @@ async function createServer() {
             reason,
             graceful_duration_ms: gracefulDuration,
             total_duration_ms: totalDuration,
+            connection_draining: {
+              initial_sockets: gracefulResult.initialSocketCount,
+              remaining_sockets: gracefulResult.remainingSockets,
+              closed_sockets: gracefulResult.closedSockets,
+              drain_duration_ms: gracefulResult.duration
+            },
             ts: new Date().toISOString()
           }).catch(() => {});
           await shutdownEventSink.close().catch(() => {});
