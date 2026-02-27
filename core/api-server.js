@@ -281,7 +281,10 @@ async function createServer() {
         escalation_enabled: String(process.env.DELIVERY_ALERT_ESCALATION_ENABLED || 'false').toLowerCase() !== 'false',
         escalation_min_level: String(process.env.DELIVERY_ALERT_ESCALATION_MIN_LEVEL || 'critical').toLowerCase(),
         escalation_user_id_configured: !!process.env.DELIVERY_ALERT_ESCALATION_USER_ID,
-        escalation_channel: process.env.DELIVERY_ALERT_ESCALATION_CHANNEL || (process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event')
+        escalation_channel: process.env.DELIVERY_ALERT_ESCALATION_CHANNEL || (process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event'),
+        oncall_sync_enabled: String(process.env.DELIVERY_ALERT_ONCALL_SYNC_ENABLED || 'false').toLowerCase() !== 'false',
+        oncall_source_file_configured: !!process.env.DELIVERY_ALERT_ONCALL_FILE,
+        oncall_refresh_ms: Number(process.env.DELIVERY_ALERT_ONCALL_REFRESH_MS || 60000)
       },
       time: new Date().toISOString()
     });
@@ -528,10 +531,17 @@ async function createServer() {
     }
   });
 
-  app.get('/jobs/delivery/route-policy', async (_req, res) => {
+  app.get('/jobs/delivery/route-policy', async (req, res) => {
     try {
+      const forceSync = String(req.query.sync || 'false').toLowerCase() === 'true';
+
+      if (scheduler && typeof scheduler.getAlertRoutePolicy === 'function') {
+        const policy = await scheduler.getAlertRoutePolicy({ forceSync });
+        return res.json({ ok: true, policy });
+      }
+
       const cfg = scheduler?.deliveryAlertConfig || {};
-      res.json({
+      return res.json({
         ok: true,
         policy: {
           route_enabled: !!cfg.routeEnabled,
@@ -544,7 +554,13 @@ async function createServer() {
           escalation_enabled: !!cfg.escalationEnabled,
           escalation_min_level: cfg.escalationMinLevel || 'critical',
           escalation_user_id: cfg.escalationUserId || null,
-          escalation_channel: cfg.escalationChannel || null
+          escalation_channel: cfg.escalationChannel || null,
+          oncall_sync: {
+            enabled: false,
+            source_file: null,
+            stale: true,
+            error: 'scheduler policy sync unavailable'
+          }
         }
       });
     } catch (err) {

@@ -30,6 +30,33 @@ Delivery alert routing is controlled by scheduler-native policy.
 - `DELIVERY_ALERT_ESCALATION_USER_ID`
 - `DELIVERY_ALERT_ESCALATION_CHANNEL`
 
+### On-call ownership sync (automation hook)
+
+Optional automation can override warn/critical/escalation owners from a roster file.
+
+- `DELIVERY_ALERT_ONCALL_SYNC_ENABLED` (default: `false`)
+- `DELIVERY_ALERT_ONCALL_FILE` (JSON file path)
+- `DELIVERY_ALERT_ONCALL_REFRESH_MS` (default: `60000`)
+- key mapping controls:
+  - `DELIVERY_ALERT_ONCALL_WARN_KEY` (default: `delivery_alert_warn`)
+  - `DELIVERY_ALERT_ONCALL_CRITICAL_KEY` (default: `delivery_alert_critical`)
+  - `DELIVERY_ALERT_ONCALL_ESCALATION_KEY` (default: `delivery_alert_escalation`)
+
+Roster example:
+
+```json
+{
+  "owners": {
+    "delivery_alert_warn": { "user_id": "<warn-user-id>", "channel": "cron-event" },
+    "delivery_alert_critical": { "user_id": "<critical-user-id>", "channel": "cron-event" },
+    "delivery_alert_escalation": { "user_id": "<escalation-user-id>", "channel": "cron-event" }
+  }
+}
+```
+
+Inspect effective policy and sync status:
+- `GET /jobs/delivery/route-policy?sync=true`
+
 ---
 
 ## 2) Ownership matrix
@@ -85,8 +112,10 @@ After policy changes:
 
 1. Check policy endpoint:
    - `GET /jobs/delivery/route-policy`
+   - `GET /jobs/delivery/route-policy?sync=true` (if on-call sync enabled)
 2. Trigger policy test suite:
    - `npm run test:alert-policy`
+   - `npm run test:alert-ownership`
    - `npm run test:alerts`
 3. Validate health snapshot includes alert policy:
    - `GET /health` → `delivery_alert_policy`

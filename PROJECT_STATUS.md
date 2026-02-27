@@ -283,13 +283,25 @@ Updated: 2026-02-27
    - Added coverage: `test-deploy-observability.js`
    - Updated deployment ops docs with observability env + event reference
 
+36. **Alert ownership automation hooks added (on-call roster sync)**
+   - Scheduler routing policy now supports on-call sync overrides from roster file
+   - New env controls:
+     - `DELIVERY_ALERT_ONCALL_SYNC_ENABLED`
+     - `DELIVERY_ALERT_ONCALL_FILE`
+     - `DELIVERY_ALERT_ONCALL_REFRESH_MS`
+     - `DELIVERY_ALERT_ONCALL_WARN_KEY` / `...CRITICAL_KEY` / `...ESCALATION_KEY`
+   - `GET /jobs/delivery/route-policy?sync=true` now exposes effective owner mapping + sync status
+   - Alert dispatch now uses effective on-call owners when sync is enabled
+   - Added coverage: `test-alert-ownership-sync.js`
+   - Updated governance docs with roster format and verification flow
+
 ---
 
 ## In progress / next
 
-1. Add alert ownership automation hooks (sync route policy with on-call roster)
-2. Add canary baseline profiling (auto-calibrate thresholds from historical runs)
-3. Add deploy-wrapper event sink integration (persist structured deploy events to DB)
+1. Add canary baseline profiling (auto-calibrate thresholds from historical runs)
+2. Add deploy-wrapper event sink integration (persist structured deploy events to DB)
+3. Add alert ownership drift detection (roster freshness + mismatch alerts)
 
 ---
 
@@ -337,6 +349,7 @@ npm run test:quality
 npm run test:alerts
 npm run test:alert-routing
 npm run test:alert-policy
+npm run test:alert-ownership
 npm run test:inline-retry
 npm run test:deploy
 npm run test:deploy-observability

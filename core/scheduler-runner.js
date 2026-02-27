@@ -1,3 +1,5 @@
+const fs = require('fs/promises');
+const path = require('path');
 const KBIMonitor = require('./kbi-monitor');
 const InterventionEngine = require('./intervention-engine');
 const CronEventDelivery = require('./cron-event-delivery');
@@ -46,11 +48,37 @@ class SchedulerRunner {
       routeUserIdWarn: options.alertRouteUserIdWarn ?? process.env.DELIVERY_ALERT_ROUTE_USER_ID_WARN ?? null,
       routeUserIdCritical: options.alertRouteUserIdCritical ?? process.env.DELIVERY_ALERT_ROUTE_USER_ID_CRITICAL ?? null,
       routeChannel: options.alertRouteChannel ?? process.env.DELIVERY_ALERT_ROUTE_CHANNEL ?? 'cron-event',
+      routeChannelWarn: options.alertRouteChannelWarn ?? process.env.DELIVERY_ALERT_ROUTE_CHANNEL_WARN ?? null,
+      routeChannelCritical: options.alertRouteChannelCritical ?? process.env.DELIVERY_ALERT_ROUTE_CHANNEL_CRITICAL ?? null,
       routeStrategy: normalizeRouteStrategy(options.alertRouteStrategy ?? process.env.DELIVERY_ALERT_ROUTE_STRATEGY ?? 'single'),
       escalationEnabled: options.alertEscalationEnabled ?? String(process.env.DELIVERY_ALERT_ESCALATION_ENABLED || 'false').toLowerCase() !== 'false',
       escalationMinLevel: normalizeLevel(options.alertEscalationMinLevel ?? process.env.DELIVERY_ALERT_ESCALATION_MIN_LEVEL ?? 'critical', 'critical'),
       escalationUserId: options.alertEscalationUserId ?? process.env.DELIVERY_ALERT_ESCALATION_USER_ID ?? null,
       escalationChannel: options.alertEscalationChannel ?? process.env.DELIVERY_ALERT_ESCALATION_CHANNEL ?? (process.env.DELIVERY_ALERT_ROUTE_CHANNEL || 'cron-event')
+    };
+
+    this.oncallSyncConfig = {
+      enabled: options.oncallSyncEnabled ?? String(process.env.DELIVERY_ALERT_ONCALL_SYNC_ENABLED || 'false').toLowerCase() !== 'false',
+      sourceFile: options.oncallSourceFile ?? process.env.DELIVERY_ALERT_ONCALL_FILE ?? null,
+      refreshMs: Number(options.oncallRefreshMs ?? process.env.DELIVERY_ALERT_ONCALL_REFRESH_MS ?? 60000),
+      warnKey: options.oncallWarnKey ?? process.env.DELIVERY_ALERT_ONCALL_WARN_KEY ?? 'delivery_alert_warn',
+      criticalKey: options.oncallCriticalKey ?? process.env.DELIVERY_ALERT_ONCALL_CRITICAL_KEY ?? 'delivery_alert_critical',
+      escalationKey: options.oncallEscalationKey ?? process.env.DELIVERY_ALERT_ONCALL_ESCALATION_KEY ?? 'delivery_alert_escalation'
+    };
+
+    this.alertRouteOverrides = null;
+    this.oncallSyncState = {
+      enabled: !!this.oncallSyncConfig.enabled,
+      source_file: this.oncallSyncConfig.sourceFile || null,
+      refresh_ms: this.oncallSyncConfig.refreshMs,
+      last_sync_at: null,
+      stale: true,
+      error: null,
+      assigned: {
+        warn: null,
+        critical: null,
+        escalation: null
+      }
     };
   }
 
@@ -130,6 +158,161 @@ class SchedulerRunner {
     return (rank[a] || 0) - (rank[b] || 0);
   }
 
+  normalizeOncallOwner(owner) {
+    if (!owner) return null;
+
+    if (typeof owner === 'string') {
+      const userId = owner.trim();
+      return userId ? { user_id: userId, channel: null } : null;
+    }
+
+    if (typeof owner === 'object') {
+      const userId = owner.user_id || owner.userId || owner.id || null;
+      const channel = owner.channel || null;
+
+      if (!userId) return null;
+      return {
+        user_id: String(userId).trim(),
+        channel: channel ? String(channel).trim() : null
+      };
+    }
+
+    return null;
+  }
+
+  parseOncallRoster(raw) {
+    const root = raw?.owners && typeof raw.owners === 'object'
+      ? raw.owners
+      : raw;
+
+    if (!root || typeof root !== 'object') {
+      return {
+        warn: null,
+        critical: null,
+        escalation: null
+      };
+    }
+
+    const warn = this.normalizeOncallOwner(root[this.oncallSyncConfig.warnKey]);
+    const critical = this.normalizeOncallOwner(root[this.oncallSyncConfig.criticalKey]);
+    const escalation = this.normalizeOncallOwner(root[this.oncallSyncConfig.escalationKey]);
+
+    return { warn, critical, escalation };
+  }
+
+  async syncOncallRouting({ force = false } = {}) {
+    const cfg = this.oncallSyncConfig;
+    const state = this.oncallSyncState;
+
+    if (!cfg.enabled) {
+      return {
+        ...state,
+        enabled: false,
+        stale: false
+      };
+    }
+
+    if (!cfg.sourceFile) {
+      state.error = 'missing DELIVERY_ALERT_ONCALL_FILE';
+      state.stale = true;
+      return { ...state };
+    }
+
+    const lastSyncAt = state.last_sync_at ? Date.parse(state.last_sync_at) : 0;
+    if (!force && lastSyncAt > 0 && (Date.now() - lastSyncAt) < Math.max(1000, cfg.refreshMs) && !state.stale) {
+      return { ...state };
+    }
+
+    try {
+      const absPath = path.resolve(cfg.sourceFile);
+      const raw = await fs.readFile(absPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      const owners = this.parseOncallRoster(parsed);
+
+      this.alertRouteOverrides = {
+        routeUserIdWarn: owners.warn?.user_id || null,
+        routeUserIdCritical: owners.critical?.user_id || null,
+        escalationUserId: owners.escalation?.user_id || null,
+        routeChannelWarn: owners.warn?.channel || null,
+        routeChannelCritical: owners.critical?.channel || null,
+        escalationChannel: owners.escalation?.channel || null
+      };
+
+      this.oncallSyncState = {
+        enabled: true,
+        source_file: absPath,
+        refresh_ms: cfg.refreshMs,
+        last_sync_at: new Date().toISOString(),
+        stale: false,
+        error: null,
+        assigned: {
+          warn: owners.warn,
+          critical: owners.critical,
+          escalation: owners.escalation
+        }
+      };
+
+      return { ...this.oncallSyncState };
+    } catch (err) {
+      this.oncallSyncState = {
+        ...this.oncallSyncState,
+        enabled: true,
+        source_file: cfg.sourceFile,
+        refresh_ms: cfg.refreshMs,
+        stale: true,
+        error: err.message,
+        last_sync_at: this.oncallSyncState.last_sync_at || null
+      };
+
+      return { ...this.oncallSyncState };
+    }
+  }
+
+  getEffectiveDeliveryAlertConfig() {
+    const cfg = this.deliveryAlertConfig;
+    const overrides = this.alertRouteOverrides || {};
+
+    return {
+      ...cfg,
+      routeUserIdWarn: overrides.routeUserIdWarn || cfg.routeUserIdWarn || null,
+      routeUserIdCritical: overrides.routeUserIdCritical || cfg.routeUserIdCritical || null,
+      escalationUserId: overrides.escalationUserId || cfg.escalationUserId || null,
+      routeChannelWarn: overrides.routeChannelWarn || cfg.routeChannelWarn || null,
+      routeChannelCritical: overrides.routeChannelCritical || cfg.routeChannelCritical || null,
+      escalationChannel: overrides.escalationChannel || cfg.escalationChannel || null
+    };
+  }
+
+  async getAlertRoutePolicy({ forceSync = false } = {}) {
+    const sync = await this.syncOncallRouting({ force: forceSync });
+    const cfg = this.getEffectiveDeliveryAlertConfig();
+
+    return {
+      route_enabled: !!cfg.routeEnabled,
+      route_strategy: cfg.routeStrategy || 'single',
+      route_retry_max: Number(cfg.routeRetryMax || 0),
+      route_channel: cfg.routeChannel || 'cron-event',
+      route_channel_warn: cfg.routeChannelWarn || null,
+      route_channel_critical: cfg.routeChannelCritical || null,
+      route_user_id: cfg.routeUserId || null,
+      route_user_id_warn: cfg.routeUserIdWarn || null,
+      route_user_id_critical: cfg.routeUserIdCritical || null,
+      escalation_enabled: !!cfg.escalationEnabled,
+      escalation_min_level: cfg.escalationMinLevel || 'critical',
+      escalation_user_id: cfg.escalationUserId || null,
+      escalation_channel: cfg.escalationChannel || null,
+      oncall_sync: {
+        enabled: !!sync.enabled,
+        source_file: sync.source_file || null,
+        refresh_ms: sync.refresh_ms || null,
+        last_sync_at: sync.last_sync_at || null,
+        stale: !!sync.stale,
+        error: sync.error || null,
+        assigned: sync.assigned || { warn: null, critical: null, escalation: null }
+      }
+    };
+  }
+
   buildDeliveryAlertText({ level, reasons, trend, metrics }) {
     const headline = level === 'critical'
       ? '🚨 Delivery Alert (CRITICAL)'
@@ -154,19 +337,21 @@ class SchedulerRunner {
   }
 
   resolveAlertRouting(level) {
-    const cfg = this.deliveryAlertConfig;
+    const cfg = this.getEffectiveDeliveryAlertConfig();
     const normalizedLevel = this.normalizeAlertLevel(level);
 
     let primaryUserId = cfg.routeUserId || null;
+    let primaryChannel = cfg.routeChannel || 'cron-event';
+
     if (cfg.routeStrategy === 'severity') {
       if (normalizedLevel === 'critical' && cfg.routeUserIdCritical) {
         primaryUserId = cfg.routeUserIdCritical;
+        if (cfg.routeChannelCritical) primaryChannel = cfg.routeChannelCritical;
       } else if (normalizedLevel === 'warn' && cfg.routeUserIdWarn) {
         primaryUserId = cfg.routeUserIdWarn;
+        if (cfg.routeChannelWarn) primaryChannel = cfg.routeChannelWarn;
       }
     }
-
-    const primaryChannel = cfg.routeChannel || 'cron-event';
 
     const escalationTriggered = cfg.escalationEnabled
       && !!cfg.escalationUserId
@@ -277,7 +462,7 @@ class SchedulerRunner {
     trend,
     config
   }) {
-    const routeCfg = this.deliveryAlertConfig;
+    const routeCfg = this.getEffectiveDeliveryAlertConfig();
 
     if (this.delivery?.mode === 'none') {
       return {
@@ -400,7 +585,8 @@ class SchedulerRunner {
       this.db.getOutboundEventStats(windowMinutes)
     ]);
 
-    const cfg = this.deliveryAlertConfig;
+    const oncallSync = await this.syncOncallRouting();
+    const cfg = this.getEffectiveDeliveryAlertConfig();
     const reasons = [];
     let level = 'info';
 
@@ -481,7 +667,14 @@ class SchedulerRunner {
           critical_dead_letter_recent: cfg.criticalDeadLetterRecent,
           warn_growth_streak: cfg.warnGrowthStreak,
           critical_growth_streak: cfg.criticalGrowthStreak,
-          cooldown_minutes: cfg.cooldownMinutes
+          cooldown_minutes: cfg.cooldownMinutes,
+          oncall_sync: {
+            enabled: !!oncallSync.enabled,
+            source_file: oncallSync.source_file || null,
+            stale: !!oncallSync.stale,
+            error: oncallSync.error || null,
+            last_sync_at: oncallSync.last_sync_at || null
+          }
         }
       });
     }
@@ -506,6 +699,14 @@ class SchedulerRunner {
             outbox_total_dead_letter: deadLetterTotal,
             growth,
             growth_streak: growthStreak,
+            oncall_sync: {
+              enabled: !!oncallSync.enabled,
+              source_file: oncallSync.source_file || null,
+              stale: !!oncallSync.stale,
+              error: oncallSync.error || null,
+              last_sync_at: oncallSync.last_sync_at || null,
+              assigned: oncallSync.assigned || null
+            },
             alert_delivery: alertDelivery
           }
         );
@@ -543,13 +744,24 @@ class SchedulerRunner {
         route_retry_max: cfg.routeRetryMax,
         route_strategy: cfg.routeStrategy,
         route_channel: cfg.routeChannel,
+        route_channel_warn: cfg.routeChannelWarn || null,
+        route_channel_critical: cfg.routeChannelCritical || null,
         route_user_id: cfg.routeUserId || null,
         route_user_id_warn: cfg.routeUserIdWarn || null,
         route_user_id_critical: cfg.routeUserIdCritical || null,
         escalation_enabled: cfg.escalationEnabled,
         escalation_min_level: cfg.escalationMinLevel,
         escalation_user_id: cfg.escalationUserId || null,
-        escalation_channel: cfg.escalationChannel || null
+        escalation_channel: cfg.escalationChannel || null,
+        oncall_sync: {
+          enabled: !!oncallSync.enabled,
+          source_file: oncallSync.source_file || null,
+          refresh_ms: oncallSync.refresh_ms || null,
+          last_sync_at: oncallSync.last_sync_at || null,
+          stale: !!oncallSync.stale,
+          error: oncallSync.error || null,
+          assigned: oncallSync.assigned || { warn: null, critical: null, escalation: null }
+        }
       }
     };
   }
