@@ -57,6 +57,85 @@ async function createServer() {
     goals: Number(process.env.RATE_LIMIT_MAX_GOALS || rateLimitMax)
   };
 
+  const parseStringList = (raw) => String(raw || '')
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+
+  const normalizeReplayApproverStrategy = (raw) => {
+    const strategy = String(raw || 'either').trim().toLowerCase();
+    if (['either', 'allowlist', 'role', 'both'].includes(strategy)) return strategy;
+    return 'either';
+  };
+
+  const deadLetterReplayPolicy = {
+    maxLimit: Number(process.env.DEADLETTER_REPLAY_MAX_LIMIT || 500),
+    approvalThreshold: Number(process.env.DEADLETTER_REPLAY_APPROVAL_THRESHOLD || 50),
+    requireApproval: String(process.env.DEADLETTER_REPLAY_REQUIRE_APPROVAL || 'true').toLowerCase() !== 'false',
+    approvalCode: process.env.DEADLETTER_REPLAY_APPROVAL_CODE || null,
+    approverStrategy: normalizeReplayApproverStrategy(process.env.DEADLETTER_REPLAY_APPROVER_STRATEGY),
+    approverAllowlist: parseStringList(process.env.DEADLETTER_REPLAY_APPROVER_ALLOWLIST),
+    approverRoles: parseStringList(process.env.DEADLETTER_REPLAY_APPROVER_ROLES)
+  };
+
+  const extractReplayOperator = (req) => {
+    const fromBodyId = req.body?.operatorId ? String(req.body.operatorId).trim() : '';
+    const fromHeaderId = req.headers['x-operator-id'] ? String(req.headers['x-operator-id']).trim() : '';
+    const operatorId = fromBodyId || fromHeaderId || null;
+
+    const fromBodyRole = req.body?.operatorRole ? String(req.body.operatorRole).trim() : '';
+    const fromHeaderRole = req.headers['x-operator-role'] ? String(req.headers['x-operator-role']).trim() : '';
+    const operatorRole = (fromBodyRole || fromHeaderRole || '').toLowerCase() || null;
+
+    return {
+      operatorId: operatorId ? operatorId.toLowerCase() : null,
+      operatorRole
+    };
+  };
+
+  const evaluateReplayApprover = ({ operatorId, operatorRole }) => {
+    const allowlist = deadLetterReplayPolicy.approverAllowlist;
+    const roles = deadLetterReplayPolicy.approverRoles;
+    const strategy = deadLetterReplayPolicy.approverStrategy;
+
+    const hasAllowlist = allowlist.length > 0;
+    const hasRoles = roles.length > 0;
+
+    // No policy configured => do not enforce approver identity gate.
+    if (!hasAllowlist && !hasRoles) {
+      return {
+        policyEnforced: false,
+        authorized: true,
+        idAllowed: true,
+        roleAllowed: true,
+        strategy
+      };
+    }
+
+    const idAllowed = hasAllowlist && !!operatorId && allowlist.includes(operatorId);
+    const roleAllowed = hasRoles && !!operatorRole && roles.includes(operatorRole);
+
+    let authorized;
+    if (strategy === 'allowlist') {
+      authorized = idAllowed;
+    } else if (strategy === 'role') {
+      authorized = roleAllowed;
+    } else if (strategy === 'both') {
+      authorized = idAllowed && roleAllowed;
+    } else {
+      // either
+      authorized = idAllowed || roleAllowed;
+    }
+
+    return {
+      policyEnforced: true,
+      authorized,
+      idAllowed,
+      roleAllowed,
+      strategy
+    };
+  };
+
   const normalizeClientPart = (value) => {
     const raw = Array.isArray(value) ? value[0] : value;
     const base = String(raw || 'unknown').split(',')[0].trim();
@@ -146,10 +225,14 @@ async function createServer() {
       rate_limit_policy: rateLimitPolicy,
       cron_delivery_mode: cronDeliveryMode,
       dead_letter_replay_policy: {
-        max_limit: Number(process.env.DEADLETTER_REPLAY_MAX_LIMIT || 500),
-        approval_threshold: Number(process.env.DEADLETTER_REPLAY_APPROVAL_THRESHOLD || 50),
-        require_approval: String(process.env.DEADLETTER_REPLAY_REQUIRE_APPROVAL || 'true').toLowerCase() !== 'false',
-        approval_code_configured: !!process.env.DEADLETTER_REPLAY_APPROVAL_CODE
+        max_limit: deadLetterReplayPolicy.maxLimit,
+        approval_threshold: deadLetterReplayPolicy.approvalThreshold,
+        require_approval: deadLetterReplayPolicy.requireApproval,
+        approval_code_configured: !!deadLetterReplayPolicy.approvalCode,
+        approver_strategy: deadLetterReplayPolicy.approverStrategy,
+        approver_allowlist_count: deadLetterReplayPolicy.approverAllowlist.length,
+        approver_roles_count: deadLetterReplayPolicy.approverRoles.length,
+        approver_policy_enforced: deadLetterReplayPolicy.approverAllowlist.length > 0 || deadLetterReplayPolicy.approverRoles.length > 0
       },
       delivery_alert_policy: {
         route_enabled: String(process.env.DELIVERY_ALERT_ROUTE_ENABLED || 'true').toLowerCase() !== 'false',
@@ -505,12 +588,35 @@ async function createServer() {
     }
   });
 
-  const deadLetterReplayPolicy = {
-    maxLimit: Number(process.env.DEADLETTER_REPLAY_MAX_LIMIT || 500),
-    approvalThreshold: Number(process.env.DEADLETTER_REPLAY_APPROVAL_THRESHOLD || 50),
-    requireApproval: String(process.env.DEADLETTER_REPLAY_REQUIRE_APPROVAL || 'true').toLowerCase() !== 'false',
-    approvalCode: process.env.DEADLETTER_REPLAY_APPROVAL_CODE || null
-  };
+  app.get('/jobs/dead-letter/replay-policy', async (req, res) => {
+    try {
+      const operator = extractReplayOperator(req);
+      const approver = evaluateReplayApprover(operator);
+
+      res.json({
+        ok: true,
+        policy: {
+          maxLimit: deadLetterReplayPolicy.maxLimit,
+          approvalThreshold: deadLetterReplayPolicy.approvalThreshold,
+          requireApproval: deadLetterReplayPolicy.requireApproval,
+          approvalCodeConfigured: !!deadLetterReplayPolicy.approvalCode,
+          approverStrategy: deadLetterReplayPolicy.approverStrategy,
+          approverAllowlistCount: deadLetterReplayPolicy.approverAllowlist.length,
+          approverRolesCount: deadLetterReplayPolicy.approverRoles.length,
+          approverPolicyEnforced: approver.policyEnforced
+        },
+        operator: {
+          operatorId: operator.operatorId,
+          operatorRole: operator.operatorRole,
+          authorized: approver.authorized,
+          policy_enforced: approver.policyEnforced,
+          strategy: approver.strategy
+        }
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   app.post('/jobs/dead-letter/replay-bulk', async (req, res) => {
     try {
@@ -522,6 +628,8 @@ async function createServer() {
       const preview = req.body?.preview === true;
       const approve = req.body?.approve === true;
       const approvalCode = req.body?.approvalCode ? String(req.body.approvalCode) : null;
+      const operator = extractReplayOperator(req);
+      const approver = evaluateReplayApprover(operator);
 
       let olderThanMinutes;
       if (olderThanMinutesRaw !== undefined) {
@@ -562,8 +670,19 @@ async function createServer() {
           ok: true,
           preview: true,
           policy: {
-            ...deadLetterReplayPolicy,
-            approvalCode: deadLetterReplayPolicy.approvalCode ? '[configured]' : null
+            maxLimit: deadLetterReplayPolicy.maxLimit,
+            approvalThreshold: deadLetterReplayPolicy.approvalThreshold,
+            requireApproval: deadLetterReplayPolicy.requireApproval,
+            approvalCodeConfigured: !!deadLetterReplayPolicy.approvalCode,
+            approverStrategy: deadLetterReplayPolicy.approverStrategy,
+            approverAllowlistCount: deadLetterReplayPolicy.approverAllowlist.length,
+            approverRolesCount: deadLetterReplayPolicy.approverRoles.length,
+            approverPolicyEnforced: approver.policyEnforced
+          },
+          operator: {
+            operatorId: operator.operatorId,
+            operatorRole: operator.operatorRole,
+            authorized: approver.authorized
           },
           requires_approval: deadLetterReplayPolicy.requireApproval && largeReplay,
           count: events.length,
@@ -573,7 +692,17 @@ async function createServer() {
 
       if (deadLetterReplayPolicy.requireApproval && largeReplay) {
         const codeOk = !deadLetterReplayPolicy.approvalCode || approvalCode === deadLetterReplayPolicy.approvalCode;
-        if (!approve || !codeOk) {
+        const blockers = [];
+
+        if (!approve) blockers.push('approve_flag_missing');
+        if (!codeOk) blockers.push('approval_code_invalid');
+        if (!approver.authorized) blockers.push('operator_not_authorized');
+
+        if (blockers.length > 0) {
+          const reason = blockers.includes('operator_not_authorized')
+            ? 'operator_not_authorized'
+            : 'approval_required';
+
           try {
             await db.logAgentAction(
               'scheduler-replay',
@@ -584,16 +713,22 @@ async function createServer() {
               'success',
               null,
               {
-                reason: 'approval_required',
+                reason,
+                blockers,
                 limit,
                 eventType,
                 userId,
                 olderThanMinutes: Number.isInteger(olderThanMinutes) ? olderThanMinutes : null,
+                operator,
+                approver,
                 policy: {
                   maxLimit: deadLetterReplayPolicy.maxLimit,
                   approvalThreshold: deadLetterReplayPolicy.approvalThreshold,
                   requireApproval: deadLetterReplayPolicy.requireApproval,
-                  approvalCodeConfigured: !!deadLetterReplayPolicy.approvalCode
+                  approvalCodeConfigured: !!deadLetterReplayPolicy.approvalCode,
+                  approverStrategy: deadLetterReplayPolicy.approverStrategy,
+                  approverAllowlistCount: deadLetterReplayPolicy.approverAllowlist.length,
+                  approverRolesCount: deadLetterReplayPolicy.approverRoles.length
                 }
               }
             );
@@ -603,14 +738,26 @@ async function createServer() {
 
           return res.status(403).json({
             ok: false,
-            reason: 'approval_required',
+            reason,
+            blockers,
+            operator: {
+              operatorId: operator.operatorId,
+              operatorRole: operator.operatorRole,
+              authorized: approver.authorized,
+              policyEnforced: approver.policyEnforced,
+              strategy: approver.strategy
+            },
             policy: {
               maxLimit: deadLetterReplayPolicy.maxLimit,
               approvalThreshold: deadLetterReplayPolicy.approvalThreshold,
               requireApproval: deadLetterReplayPolicy.requireApproval,
-              approvalCodeRequired: !!deadLetterReplayPolicy.approvalCode
+              approvalCodeRequired: !!deadLetterReplayPolicy.approvalCode,
+              approverStrategy: deadLetterReplayPolicy.approverStrategy,
+              approverAllowlistCount: deadLetterReplayPolicy.approverAllowlist.length,
+              approverRolesCount: deadLetterReplayPolicy.approverRoles.length,
+              approverPolicyEnforced: approver.policyEnforced
             },
-            hint: 'Set approve=true and include approvalCode when configured.'
+            hint: 'Set approve=true, provide approvalCode when configured, and include an authorized operatorId/operatorRole.'
           });
         }
       }
@@ -631,7 +778,14 @@ async function createServer() {
         ok: true,
         policy_applied: {
           largeReplay,
-          approvalChecked: deadLetterReplayPolicy.requireApproval
+          approvalChecked: deadLetterReplayPolicy.requireApproval,
+          operator: {
+            operatorId: operator.operatorId,
+            operatorRole: operator.operatorRole,
+            authorized: approver.authorized,
+            policyEnforced: approver.policyEnforced,
+            strategy: approver.strategy
+          }
         },
         result
       });

@@ -25,6 +25,7 @@
     "test:replay": "node test-dead-letter-replay.js",
     "test:replay-bulk": "node test-dead-letter-bulk-replay.js",
     "test:replay-safety": "node test-dead-letter-safety-policy.js",
+    "test:ops-policy": "node test-dead-letter-ops-policy.js",
     "test:quality": "node test-data-quality-api.js",
     "test:alerts": "node test-delivery-alerts.js",
     "test:alert-routing": "node test-alert-routing.js",

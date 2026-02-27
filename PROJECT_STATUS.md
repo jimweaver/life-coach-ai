@@ -213,13 +213,23 @@ Updated: 2026-02-27
    - Added rollback procedures for common failure scenarios
    - Added env variables reference for operational tuning
 
+29. **Dead-letter replay ops controls added (allowlist/role-based approval)**
+   - Added approver policy controls for bulk replay:
+     - `DEADLETTER_REPLAY_APPROVER_ALLOWLIST`
+     - `DEADLETTER_REPLAY_APPROVER_ROLES`
+     - `DEADLETTER_REPLAY_APPROVER_STRATEGY` (`either|allowlist|role|both`)
+   - Added policy introspection endpoint: `GET /jobs/dead-letter/replay-policy`
+   - `POST /jobs/dead-letter/replay-bulk` now enforces operator authorization when policy is configured
+   - Preview and response payloads now include operator authorization context
+   - Added coverage: `test-dead-letter-ops-policy.js`
+
 ---
 
 ## In progress / next
 
-1. Add dead-letter replay policy ops controls (allowlist/role-based approval strategy)
-2. Add alert routing policy controls (destination strategy + escalation channels)
-3. Add production readiness checklist (observability + graceful shutdown hardening)
+1. Add alert routing policy controls (destination strategy + escalation channels)
+2. Add production readiness checklist (observability + graceful shutdown hardening)
+3. Add deployment smoke orchestration mode (run checks against managed process lifecycle)
 
 ---
 
@@ -255,6 +265,7 @@ npm run test:retry
 npm run test:replay
 npm run test:replay-bulk
 npm run test:replay-safety
+npm run test:ops-policy
 npm run test:quality
 npm run test:alerts
 npm run test:alert-routing
