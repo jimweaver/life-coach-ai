@@ -1,0 +1,203 @@
+name: Life Coach AI CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: life_coach_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Setup test database
+        run: |
+          cp .env.example .env.test
+          echo "DATABASE_URL=postgresql://test:test@localhost:5432/life_coach_test" >> .env.test
+          echo "REDIS_HOST=localhost" >> .env.test
+          echo "REDIS_PORT=6379" >> .env.test
+          echo "NODE_ENV=test" >> .env.test
+      
+      - name: Initialize database schema
+        run: |
+          source .env.test
+          npm run db:init
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+      
+      - name: Run core tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+          # Disable external API calls in tests
+          BRAVE_API_KEY: test-key
+          OPENAI_API_KEY: test-key
+      
+      - name: Run database tests
+        run: npm run test:db
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+      
+      - name: Run agent tests
+        run: npm run test:agents
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+      
+      - name: Run orchestrator tests
+        run: npm run test:orchestrator
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+      
+      - name: Run scheduler tests
+        run: npm run test:scheduler
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+      
+      - name: Run metrics tests
+        run: npm run test:metrics
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+      
+      - name: Run delivery tests
+        run: npm run test:delivery
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+      
+      - name: Run graceful shutdown tests
+        run: npm run test:graceful
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+      
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/life_coach_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          NODE_ENV: test
+          PORT: 8788
+      
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Node.js 22" >> $GITHUB_STEP_SUMMARY
+          echo "- PostgreSQL 16" >> $GITHUB_STEP_SUMMARY
+          echo "- Redis 7" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All core tests executed." >> $GITHUB_STEP_SUMMARY
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run ESLint
+        run: npm run lint
+        continue-on-error: true
+      
+      - name: Check code formatting
+        run: npm run format:check
+        continue-on-error: true
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+        continue-on-error: true

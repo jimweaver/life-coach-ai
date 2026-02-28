@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test": "npm run test:db && npm run test:agents && npm run test:orchestrator && npm run test:scheduler && npm run test:graceful && npm run test:metrics && npm run test:e2e",
+    "test:orchestrator": "node test-day3-multidomain.js && node test-orchestrator-skill-learning.js",
+    "test:metrics": "node test-metrics-dashboard.js && node test-pool-metrics.js && node test-deep-health.js",
+    "lint": "echo 'ESLint not configured yet'",
+    "format:check": "echo 'Prettier not configured yet'",
+    "db:init": "node scripts/init-db.js",
     "test:db": "node test-database.js",
     "test:day2": "node test-day2-core-agents.js",
     "test:day3": "node test-day3-multidomain.js",
