@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: life-coach
+  labels:
+    name: life-coach
+    app: life-coach-ai

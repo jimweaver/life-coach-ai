@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: life-coach-api
+  namespace: life-coach
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: life-coach-api

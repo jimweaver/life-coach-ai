@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: life-coach-config
+  namespace: life-coach
+data:
+  NODE_ENV: "production"
+  PORT: "8787"
+  REDIS_HOST: "life-coach-redis"
+  REDIS_PORT: "6379"
+  DOMAIN_MODEL_ADAPTER_MODE: "auto"
+  RATE_LIMIT_BACKEND: "redis"
+  CRON_EVENT_DELIVERY_MODE: "redis"
+  SCHEDULER_MONITOR_CYCLE_INTERVAL_MS: "14400000"
+  SCHEDULER_MORNING_CYCLE_HOUR: "9"
+  SCHEDULER_MORNING_CYCLE_MINUTE: "0"
+  SCHEDULER_MORNING_CYCLE_TIMEZONE: "America/Los_Angeles"
+  DELIVERY_ALERT_ROUTE_STRATEGY: "severity"
+  DELIVERY_ALERT_ESCALATION_ENABLED: "true"
+  DELIVERY_ALERT_ESCALATION_MIN_LEVEL: "critical"
+  DEPLOY_WRAPPER_LOG_FORMAT: "json"
+  DEPLOY_WRAPPER_EVENT_SINK: "postgres"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
