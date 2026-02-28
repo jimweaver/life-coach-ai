@@ -1,0 +1,45 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    # Normal load
+    - duration: 60
+      arrivalRate: 5
+      name: "Normal baseline"
+    # Sudden spike
+    - duration: 10
+      arrivalRate: 100
+      name: "Traffic spike"
+    # Return to normal
+    - duration: 60
+      arrivalRate: 5
+      name: "Post-spike recovery"
+    # Second spike (simulate viral moment)
+    - duration: 15
+      arrivalRate: 150
+      name: "Second spike"
+    # Recovery
+    - duration: 60
+      arrivalRate: 5
+      name: "Final recovery"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+  ensure:
+    p95: 3000
+    maxErrorRate: 5
+
+scenarios:
+  - name: "Spike traffic pattern"
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+      - post:
+          url: "/chat"
+          json:
+            userId: "spike-user-{{ $randomNumber(1, 200) }}"
+            message: "Need help with my goals"
+            sessionId: "spike-{{ $randomString(8) }}"

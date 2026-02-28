@@ -1,0 +1,51 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    - duration: 60
+      arrivalRate: 15
+      name: "Profile operations load"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Create profile"
+    weight: 30
+    flow:
+      - post:
+          url: "/profile/profile-test-{{ $randomNumber(1, 1000) }}"
+          json:
+            name: "Load Test User {{ $randomNumber(1, 1000) }}"
+            timezone: "America/Los_Angeles"
+            preferences:
+              language: "en"
+              notification: true
+          expect:
+            - statusCode: [200, 201]
+
+  - name: "Get profile"
+    weight: 40
+    flow:
+      - get:
+          url: "/profile/profile-test-{{ $randomNumber(1, 100) }}"
+          expect:
+            - statusCode: [200, 404]
+
+  - name: "Goals operations"
+    weight: 30
+    flow:
+      - post:
+          url: "/goals/profile-test-{{ $randomNumber(1, 100) }}"
+          json:
+            domain: "career"
+            title: "Get promoted"
+            target_date: "2026-12-31"
+            priority: "high"
+          expect:
+            - statusCode: [200, 201]
+      - get:
+          url: "/goals/profile-test-{{ $randomNumber(1, 100) }}"
+          expect:
+            - statusCode: [200, 404]

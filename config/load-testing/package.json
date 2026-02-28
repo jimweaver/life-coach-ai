@@ -1,0 +1,20 @@
+{
+  "name": "life-coach-load-tests",
+  "version": "1.0.0",
+  "description": "Load testing for Life Coach AI API",
+  "scripts": {
+    "test:load": "artillery run config/load-testing/basic-load-test.yml",
+    "test:load:chat": "artillery run config/load-testing/chat-load-test.yml",
+    "test:load:profile": "artillery run config/load-testing/profile-load-test.yml",
+    "test:load:health": "artillery run config/load-testing/health-load-test.yml",
+    "test:load:metrics": "artillery run config/load-testing/metrics-load-test.yml",
+    "test:load:stress": "artillery run config/load-testing/stress-test.yml",
+    "test:load:spike": "artillery run config/load-testing/spike-test.yml",
+    "test:load:soak": "artillery run config/load-testing/soak-test.yml",
+    "test:load:all": "npm run test:load:health && npm run test:load:metrics && npm run test:load:profile && npm run test:load:chat",
+    "report": "artillery report"
+  },
+  "devDependencies": {
+    "artillery": "^2.0.0"
+  }
+}

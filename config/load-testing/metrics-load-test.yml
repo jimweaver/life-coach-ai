@@ -1,0 +1,53 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    - duration: 60
+      arrivalRate: 20
+      name: "Metrics endpoint load"
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Dashboard metrics"
+    weight: 30
+    flow:
+      - get:
+          url: "/metrics/dashboard"
+          expect:
+            - statusCode: 200
+
+  - name: "Individual metrics"
+    weight: 40
+    flow:
+      - get:
+          url: "/metrics/memory"
+          expect:
+            - statusCode: 200
+      - get:
+          url: "/metrics/cache"
+          expect:
+            - statusCode: 200
+      - get:
+          url: "/metrics/latency"
+          expect:
+            - statusCode: 200
+      - get:
+          url: "/metrics/queries"
+          expect:
+            - statusCode: 200
+
+  - name: "Prometheus scrape"
+    weight: 20
+    flow:
+      - get:
+          url: "/metrics/prometheus"
+          expect:
+            - statusCode: 200
+
+  - name: "Alerts check"
+    weight: 10
+    flow:
+      - get:
+          url: "/metrics/alerts"
+          expect:
+            - statusCode: 200

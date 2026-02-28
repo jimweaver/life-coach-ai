@@ -1,0 +1,62 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 10
+      name: "Ramp up load"
+    - duration: 60
+      arrivalRate: 20
+      name: "Peak load"
+    - duration: 60
+      arrivalRate: 5
+      name: "Cool down"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Health check flow"
+    weight: 40
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+
+  - name: "Metrics dashboard"
+    weight: 20
+    flow:
+      - get:
+          url: "/metrics/dashboard"
+          expect:
+            - statusCode: 200
+
+  - name: "Profile operations"
+    weight: 20
+    flow:
+      - post:
+          url: "/profile/{{ $randomString(36) }}"
+          json:
+            name: "Test User {{ $randomNumber(1, 1000) }}"
+            timezone: "America/Los_Angeles"
+          expect:
+            - statusCode: [200, 201]
+      - get:
+          url: "/health"
+
+  - name: "Chat interaction"
+    weight: 20
+    flow:
+      - post:
+          url: "/chat"
+          json:
+            userId: "load-test-user-{{ $randomNumber(1, 100) }}"
+            message: "I want to improve my career skills"
+            sessionId: "load-test-session-{{ $randomString(8) }}"
+          expect:
+            - statusCode: 200

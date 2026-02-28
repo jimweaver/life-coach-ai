@@ -1,0 +1,47 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    # Gradually increase load to find breaking point
+    - duration: 30
+      arrivalRate: 10
+      name: "Baseline"
+    - duration: 30
+      arrivalRate: 25
+      name: "Moderate"
+    - duration: 30
+      arrivalRate: 50
+      name: "High"
+    - duration: 30
+      arrivalRate: 100
+      name: "Very high"
+    - duration: 30
+      arrivalRate: 200
+      name: "Extreme"
+    - duration: 30
+      arrivalRate: 50
+      name: "Recovery"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+  # Allow some failures under stress
+  ensure:
+    p99: 5000
+    maxErrorRate: 10
+
+scenarios:
+  - name: "Mixed workload under stress"
+    flow:
+      - get:
+          url: "/health"
+      - think: 0.1
+      - get:
+          url: "/metrics/dashboard"
+      - think: 0.1
+      - post:
+          url: "/chat"
+          json:
+            userId: "stress-user-{{ $randomNumber(1, 500) }}"
+            message: "Quick question about my career"
+            sessionId: "stress-{{ $randomString(8) }}"

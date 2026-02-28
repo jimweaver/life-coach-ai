@@ -1,0 +1,62 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    # Extended duration for memory leak detection
+    - duration: 1800  # 30 minutes
+      arrivalRate: 10
+      name: "Sustained load (30 min)"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+  ensure:
+    p99: 2000
+    maxErrorRate: 1
+
+scenarios:
+  - name: "Soak test workload"
+    weight: 40
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+      - get:
+          url: "/metrics/memory"
+          capture:
+            - json: "$.heap_utilization"
+              as: "heapUsage"
+
+  - name: "Chat sessions"
+    weight: 30
+    flow:
+      - post:
+          url: "/chat"
+          json:
+            userId: "soak-user-{{ $randomNumber(1, 100) }}"
+            message: "Long running coaching conversation"
+            sessionId: "soak-{{ $randomString(12) }}"
+          expect:
+            - statusCode: 200
+      - think: 5
+
+  - name: "Profile and goals"
+    weight: 20
+    flow:
+      - get:
+          url: "/profile/soak-user-{{ $randomNumber(1, 100) }}"
+      - get:
+          url: "/goals/soak-user-{{ $randomNumber(1, 100) }}"
+      - think: 3
+
+  - name: "Metrics polling"
+    weight: 10
+    flow:
+      - get:
+          url: "/metrics/dashboard"
+      - get:
+          url: "/metrics/cache"
+      - get:
+          url: "/metrics/queries"
+      - think: 10

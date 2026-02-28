@@ -1,0 +1,66 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    - duration: 30
+      arrivalRate: 2
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 5
+      name: "Sustained load"
+    - duration: 30
+      arrivalRate: 2
+      name: "Cool down"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Chat coaching session"
+    flow:
+      # Career coaching
+      - post:
+          url: "/chat"
+          json:
+            userId: "chat-test-{{ $randomNumber(1, 50) }}"
+            message: "I want to transition to a new career in tech"
+            sessionId: "session-{{ $randomString(12) }}"
+          expect:
+            - statusCode: 200
+          capture:
+            - json: "$.response"
+              as: "careerResponse"
+      - think: 2
+      
+      # Health coaching
+      - post:
+          url: "/chat"
+          json:
+            userId: "chat-test-{{ $randomNumber(1, 50) }}"
+            message: "I have been feeling stressed lately and not sleeping well"
+            sessionId: "session-{{ $randomString(12) }}"
+          expect:
+            - statusCode: 200
+      - think: 3
+      
+      # Finance coaching
+      - post:
+          url: "/chat"
+          json:
+            userId: "chat-test-{{ $randomNumber(1, 50) }}"
+            message: "How can I better manage my budget and save more money?"
+            sessionId: "session-{{ $randomString(12) }}"
+          expect:
+            - statusCode: 200
+      - think: 2
+      
+      # Decision making
+      - post:
+          url: "/chat"
+          json:
+            userId: "chat-test-{{ $randomNumber(1, 50) }}"
+            message: "Should I accept a job offer with higher pay but longer commute?"
+            sessionId: "session-{{ $randomString(12) }}"
+          expect:
+            - statusCode: 200

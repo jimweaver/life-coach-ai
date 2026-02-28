@@ -1,0 +1,33 @@
+config:
+  target: "http://localhost:8787"
+  phases:
+    - duration: 60
+      arrivalRate: 50
+      name: "High frequency health checks"
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Health endpoint"
+    weight: 60
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+
+  - name: "Ready endpoint"
+    weight: 20
+    flow:
+      - get:
+          url: "/ready"
+          expect:
+            - statusCode: 200
+
+  - name: "Deep health check"
+    weight: 20
+    flow:
+      - get:
+          url: "/health/deep"
+          expect:
+            - statusCode: [200, 503]
