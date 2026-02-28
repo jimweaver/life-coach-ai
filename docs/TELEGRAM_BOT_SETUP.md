@@ -1,12 +1,5 @@
 # Life Coach Telegram Bot Setup
 
-## 1. Create Bot with BotFather
-
-1. Message [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot`
-3. Name it: `Life Coach AI`
-4. Username: `lifecoach_ai_bot` (must end in _bot)
-5. **Save the token** BotFather gives you
 
 ## 2. Configure in OpenClaw
 
