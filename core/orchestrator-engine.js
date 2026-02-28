@@ -7,6 +7,7 @@ const ConflictResolver = require('./conflict-resolver');
 const ModelRouter = require('./model-router');
 const DataCollector = require('./data-collector');
 const SkillLearning = require('./skill-learning');
+const LanguageDetector = require('./language-detector');
 
 class OrchestratorEngine {
   constructor() {
@@ -16,6 +17,7 @@ class OrchestratorEngine {
     this.conflictResolver = new ConflictResolver();
     this.modelRouter = new ModelRouter();
     this.dataCollector = new DataCollector();
+    this.languageDetector = new LanguageDetector();
     this.agents = null;
 
     // Performance metrics tracking
@@ -260,6 +262,10 @@ class OrchestratorEngine {
     let result;
 
     try {
+      // Detect language of input
+      const langDetection = this.languageDetector.detect(input);
+      const detectedLang = langDetection.code;
+
       const intent = this.classifyIntent(input);
       const context = await this.retrieveContext(userId, sessionId);
 
@@ -267,17 +273,22 @@ class OrchestratorEngine {
       if (intent.urgency >= 5) {
         const emergency = this.safetyCheck(input);
         if (!emergency.passed) {
+          // Get language-appropriate crisis response
+          const crisisTemplate = this.languageDetector.getTemplate(detectedLang, 'safety', 'crisis');
+          const safeOutput = crisisTemplate || emergency.safe_output;
+
           await this.persistConversation({
             userId,
             sessionId,
             userInput: input,
-            assistantOutput: emergency.safe_output,
+            assistantOutput: safeOutput,
             agentId: 'safety-guardian'
           });
 
           await this.db.setSession(sessionId, {
             user_id: userId,
             current_intent: intent,
+            detected_language: detectedLang,
             last_message_at: new Date().toISOString()
           });
 
@@ -287,11 +298,24 @@ class OrchestratorEngine {
           return {
             session_id: sessionId,
             mode: 'emergency',
-            output: emergency.safe_output,
+            language: {
+              detected: detectedLang,
+              confidence: langDetection.confidence
+            },
+            output: safeOutput,
             elapsed_ms: elapsedMs
           };
         }
       }
+
+      // Store detected language in session
+      await this.db.setSession(sessionId, {
+        user_id: userId,
+        current_intent: intent,
+        detected_language: detectedLang,
+        language_confidence: langDetection.confidence,
+        last_message_at: new Date().toISOString()
+      });
 
       // Skill creation detection short-circuit
       const skillResult = SkillLearning.analyze(input);
@@ -357,6 +381,10 @@ class OrchestratorEngine {
         session_id: sessionId,
         mode,
         intent,
+        language: {
+          detected: detectedLang,
+          confidence: langDetection.confidence
+        },
         risk_level: safety.risk_level,
         conflicts: domainRun.conflicts,
         output: finalOutput,
